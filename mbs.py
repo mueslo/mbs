@@ -10,7 +10,7 @@ from collections.abc import Iterable
 
 mbs_timestamp = lambda s: datetime.datetime.strptime(s, "%d/%m/%Y   %H:%M")
 frame_unit = datetime.timedelta(seconds=0.001)
-fname_re = re.compile(r'.*\d{5}_\d{5}.txt')
+fname_re = re.compile(r'.*(?P<number>\d{5})_(?P<region>\d{5}).txt')
 
 
 
@@ -74,7 +74,10 @@ def parse_data(fname, metadata_only=False, zip_fname=None):
                         continue
 
                 metadata[name] = val
-        return np.array(data), metadata
+        if metadata['NoS'] != len(data[0]):
+            print('WARNING NoS={}, data.shape={},{}'.format(
+                metadata['NoS'], len(data), len(data[0])))
+        return np.array(data, dtype='uint32'), metadata
 
 
 class MBSFilePathGenerator(object):
