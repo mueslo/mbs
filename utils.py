@@ -6,11 +6,9 @@ import sys
 import numpy as np
 import matplotlib.pyplot as plt
 
-from mbs import parse_data, is_mbs_filename
+from .load import parse_data, is_mbs_filename
 
 cwd = os.getcwd()
-
-
 
 
 def make_preview(ax, data, metadata, ax_edc=None, ax_mdc=None, **kwargs):
