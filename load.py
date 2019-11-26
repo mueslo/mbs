@@ -7,6 +7,7 @@ import zipfile
 from contextlib import contextmanager
 from collections import OrderedDict
 from collections.abc import Iterable
+from functools import lru_cache
 
 mbs_timestamp = lambda s: datetime.datetime.strptime(s, "%d/%m/%Y   %H:%M")
 frame_unit = datetime.timedelta(seconds=0.001)
@@ -50,6 +51,7 @@ def load(fname, zip_fname=None):
                     yield f
 
 
+@lru_cache(maxsize=100, typed=False)
 def parse_data(fname, metadata_only=False, zip_fname=None):
     with load(fname, zip_fname) as f:
         data_flag = False
