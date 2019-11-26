@@ -77,8 +77,11 @@ def parse_data(fname, metadata_only=False, zip_fname=None):
 
                 metadata[name] = val
         if metadata['NoS'] != len(data[0]):
-            print('WARNING NoS={}, data.shape={},{}'.format(
-                metadata['NoS'], len(data), len(data[0])))
+            assert metadata['NoS'] == len(data[0]) - 1
+            e_scale = np.linspace(metadata["Start K.E."], metadata["End K.E."]-metadata['Step Size'], len(data))
+            assert np.allclose(e_scale, np.array(data)[:, 0])
+            return np.array(data, dtype='uint32')[:, 1:], metadata
+
         return np.array(data, dtype='uint32'), metadata
 
 
