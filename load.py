@@ -86,9 +86,9 @@ def parse_data(fname, metadata_only=False, zip_fname=None):
 
 
 class MBSFilePathGenerator(object):
-    def __init__(self, prefix, directory):
+    def __init__(self, prefix, directory=None):
         self.prefix = prefix
-        self.directory = directory
+        self.directory = directory or ""
     
     def __call__(self, number, region):
         if isinstance(number, Iterable):
