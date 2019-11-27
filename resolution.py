@@ -29,12 +29,11 @@ def cut(x, y, window):
     return x[idx_start:idx_end], y[idx_start:idx_end]
 
 
-def fermi_fit(data, metadata, T, ax=None):
+def fermi_fit(data, metadata, T, de=1., ax=None):
     edc = data.sum(axis=1)
     e_ax = np.linspace(metadata['Start K.E.'], metadata['End K.E.'], len(edc))
     fl = e_ax[np.max(np.argwhere(edc > np.percentile(edc, 50)))]
-    de = 1.5
-    window = (fl - de / 3, fl + 2 * de / 3)
+    window = (fl - de / 2, fl + de / 2)
     cut_e_ax, cut_edc = cut(e_ax, edc, window)
 
     func = make_fe(T, metadata['Step Size'])
@@ -47,16 +46,18 @@ def fermi_fit(data, metadata, T, ax=None):
                                 bounds=bounds)
     fit_params_d = dict(zip(["a", "b", "C", "sigma", "E_f"], fit_params))
     fit_params_d['factor'] = 1.
+    fit_params_d['fwhm'] = 2.3548 * fit_params_d['sigma']
 
     if ax:
         ax.plot(e_ax, edc, linewidth=0.5)
         ax.plot(cut_e_ax, func(cut_e_ax, *fit_params))
+        ax.set_xlim(cut_e_ax[0], cut_e_ax[-1])
         # ax.plot(cut_e_ax, func(cut_e_ax, *initial_guess), color='k')
 
     return fit_params_d
 
 
-def opt_global(fits, T, *parsed_data, plot_fits=False):
+def opt_global(fits, T, *parsed_data, de=1., plot_fits=False):
     func = make_fe(T, parsed_data[0][1]['Step Size']) # todo implement separate global err function for each
 
     def global_err(p, *xys, verbose=False):
@@ -94,9 +95,8 @@ def opt_global(fits, T, *parsed_data, plot_fits=False):
         p_global.append(fit["E_f"])
         edc = parsed_data[i][0].sum(axis=1)
         e_ax = np.linspace(parsed_data[i][1]['Start K.E.'], parsed_data[i][1]['End K.E.'], len(edc))
-        de = 1.5
         fl = fit["E_f"]
-        window = (fl-de/3, fl+2*de/3)
+        window = (fl - de / 2, fl + de / 2)
         bounds_g.append(window)
         xys.extend(cut(e_ax, edc, window))
 
@@ -115,6 +115,7 @@ def opt_global(fits, T, *parsed_data, plot_fits=False):
 
         #print('factor', repr(factor))
         fit = dict(zip(["factor", "a", "b", "C", "sigma", "E_f"], (factor,)+p_i))
+        fit['fwhm'] = 2.3548 * fit['sigma']
         fits_global.append(fit)
         #print(fit)
         if plot_fits:
@@ -122,12 +123,13 @@ def opt_global(fits, T, *parsed_data, plot_fits=False):
             plt.plot(np.linspace(parsed_data[i][1]['Start K.E.'],
                                  parsed_data[i][1]['End K.E.'], len(edc)), parsed_data[i][0].sum(axis=1))
             plt.plot(x, factor*func(x, *p_i))
+            plt.xlim(x[0], x[-1])
             plt.show()
 
     return fits_global
 
 
-def plot_opt(paths, params, T, param_name='measurement param', plot_param="sigma", fit_global=False, plot_fits=False,
+def plot_opt(paths, params, T, de=1., param_name='measurement param', plot_param="sigma", fit_global=False, plot_fits=False,
              zip_fname=None):
     dmd = []
     fits = []
@@ -137,10 +139,10 @@ def plot_opt(paths, params, T, param_name='measurement param', plot_param="sigma
         dmd.append((data, metadata))
         if plot_fits:
             plt.figure(figsize=(3, 1))
-            fit = fermi_fit(data, metadata, T=T, ax=plt.gca())
+            fit = fermi_fit(data, metadata, T=T, de=de, ax=plt.gca())
             plt.show()
         else:
-            fit = fermi_fit(data, metadata, T=T)
+            fit = fermi_fit(data, metadata, T=T, de=de)
         fits.append(fit)
 
     plt.plot(params, [fit[plot_param] for fit in fits], 'x', label='individual fit')
@@ -148,7 +150,7 @@ def plot_opt(paths, params, T, param_name='measurement param', plot_param="sigma
     plt.ylabel(plot_param)
 
     if fit_global:
-        fits_global = opt_global(fits, T, *dmd, plot_fits=plot_fits)
+        fits_global = opt_global(fits, T, *dmd, de=de, plot_fits=plot_fits)
         plt.plot(params, [fit[plot_param] for fit in fits_global], 'x', label='global fit')
         plt.legend()
         return fits, fits_global
