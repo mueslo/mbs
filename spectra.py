@@ -1,7 +1,8 @@
 import operator
 from functools import reduce
+from os.path import splitext
 
-from .load import parse_data
+from .load import parse_data, parse_info
 
 import numpy as np
 
@@ -9,10 +10,25 @@ class Spectrum(object):
     def __init__(self, data, metadata):
         self._data = data
         self._metadata = metadata
+        self._path = None
 
     @classmethod
     def from_filename(cls, fname, zip_fname=None):
-        return cls(*parse_data(fname, zip_fname=zip_fname))
+        spec = cls(*parse_data(fname, zip_fname=zip_fname))
+        spec._path = fname, zip_fname
+        return spec
+
+    @property
+    def info(self):
+        if not self._path:
+            return None
+
+        fname, zip_fname = self._path
+        info_path = splitext(fname)[0] + '.info'
+        try:
+            return parse_info(info_path, zip_fname)
+        except IOError:
+            return None
 
     def __getitem__(self, item):
         return self._metadata[item]
@@ -23,7 +39,7 @@ class Spectrum(object):
 
     @property
     def lens_scale(self):
-        return np.arange(self['XScaleMin'], self['XScaleMax'], self['XScaleMult'])
+        return np.linspace(self['XScaleMin'], self['XScaleMax'], self['NoS'])
 
     @property
     def energy_extent(self):
@@ -31,7 +47,10 @@ class Spectrum(object):
 
     @property
     def energy_scale(self):
-        return np.arange(self['Start K.E.'], self['End K.E.'], self['Step Size'])
+        return np.linspace(self["Start K.E."],
+                           self["End K.E."] - self['Step Size'],
+                           len(self._data))
+        #return np.arange(self['Start K.E.'], self['End K.E.'], self['Step Size'])
 
     @property
     def name(self):
@@ -73,6 +92,19 @@ class Spectrum(object):
         ax.set_ylabel(r'$E_\mathrm{kin}$ / eV')
         ax.set_xlabel(self['XScaleName'])
 
+    def plot_edc(self, ax, e_f=None, **kwargs):
+        if e_f is not None:
+            x_scale = e_f - self.energy_scale
+            xlabel = r'$E_\mathrm{bind}$ / eV'
+            ax.invert_xaxis()
+        else:
+            x_scale = self.energy_scale
+            xlabel = r'$E_\mathrm{kin}$ / eV'
+        ax.plot(x_scale, np.sum(self._data, axis=1), **kwargs)
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel('Intensity')
+        ax.set_yticks([], [])
+
     def plot_k(self, ax, angle_correction=1., k_origin=None, Ef=None, V0=0, **kwargs):
         if not self['Lens Mode'].startswith('L4Ang'):
             raise Exception('Lens mode is not angular.')
@@ -99,6 +131,14 @@ class Spectrum(object):
 
         ax.pcolormesh(X2, Y2, self._data,
                       shading='gouraud', **kwargs)
+
+    def get_focus(self):
+        assert not self['Lens Mode'].startswith('L4Ang')
+        focus = np.sum(self._data, axis=0)
+        mean = np.average(self.lens_scale, weights=focus)
+        std = np.sqrt(np.average((self.lens_scale - mean)**2, weights=focus))
+        skew = np.average((self.lens_scale - mean)**3, weights=focus) / (std**3)
+        return mean, std, skew
 
 
 class SpectrumSum(Spectrum):

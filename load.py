@@ -5,21 +5,29 @@ import numpy as np
 import datetime
 import zipfile
 from contextlib import contextmanager
-from collections import OrderedDict
+from collections import OrderedDict, namedtuple
 from collections.abc import Iterable
-from functools import lru_cache
 
-mbs_timestamp = lambda s: datetime.datetime.strptime(s, "%d/%m/%Y   %H:%M")
+mbs_timestamp = lambda s: datetime.datetime.strptime(s.strip(), "%d/%m/%Y   %H:%M")
+info_timestamp = lambda s: datetime.datetime.strptime(s.strip(), "%d/%m/%Y %H:%M:%S")
 frame_unit = datetime.timedelta(seconds=0.001)
 fname_re = re.compile(r'.*(?P<number>\d{5})_(?P<region>\d{5}).txt')
-
-
+info_re = re.compile(r"^([^:]+):\s*([^(]+)\s*(\(([^)]+)\))?")
+XASpectrum = namedtuple('XASpectrum', ['e', 'i0', 'sample', 'ref', 'i0_v', 'sample_v', 'ref_v', 'gap'])
 
 def is_mbs_filename(path):     
      fname = os.path.basename(path)
      if fname_re.fullmatch(fname):
          return True
      return False
+
+
+def mbs_boolean(s):
+    if s == 'Yes':
+        return True
+    elif s == 'No':
+        return False
+    raise ValueError
 
 
 def stats(metadata):
@@ -51,38 +59,88 @@ def load(fname, zip_fname=None):
                     yield f
 
 
-@lru_cache(maxsize=100, typed=False)
+io_cache = {}
 def parse_data(fname, metadata_only=False, zip_fname=None):
+    def parse_data_inner():
+        with load(fname, zip_fname) as f:
+            data_flag = False
+            data = []
+            metadata = OrderedDict()
+            for line in f:
+                if data_flag:
+                    data.append(list(map(float, line.split())))
+                elif line.startswith('DATA:'):
+                    if metadata_only:
+                        return metadata
+                    data_flag = True
+                else:
+                    name, val = line.split('\t', 1)
+                    val = val.strip()
+
+                    for T in (int, float, mbs_timestamp, mbs_boolean):
+                        try:
+                            val = T(val)
+                            break
+                        except Exception as e:
+                            continue
+
+                    if name in metadata:
+                        print('Warning, duplicate field', name)
+                    metadata[name] = val
+            if metadata['NoS'] != len(data[0]):
+                assert metadata['NoS'] == len(data[0]) - 1
+                e_scale = np.linspace(metadata["Start K.E."], metadata["End K.E."]-metadata['Step Size'], len(data))
+                assert np.allclose(e_scale, np.array(data)[:, 0])
+                return np.array(data, dtype='uint32')[:, 1:], metadata
+
+            return np.array(data, dtype='uint32'), metadata
+
+    try:
+        key = (fname, metadata_only, zip_fname)
+        file = fname or zip_fname
+        mtime = os.path.getmtime(file)
+        rv, mtime_cached = io_cache[key]
+
+        if mtime != mtime_cached:
+            print('File {} changed on disk, reloading...'.format(file))
+            raise KeyError
+
+        return rv
+
+    except KeyError as ke:
+        rv = parse_data_inner()
+        io_cache[key] = (rv, mtime)
+        return rv
+
+def parse_info(fname, zip_fname=None):
     with load(fname, zip_fname) as f:
-        data_flag = False
-        data = []
-        metadata = OrderedDict()
+        info = OrderedDict()
         for line in f:
-            if data_flag:
-                data.append(list(map(float, line.split())))
-            elif line.startswith('DATA:'):
-                if metadata_only:
-                    return metadata
-                data_flag = True
-            else:
-                name, val = line.split('\t', 1)
-                val = val.strip()
+            line = info_re.match(line)
+            quantity, value, unit = line.group(1, 2, 4)
 
-                for T in (int, float, mbs_timestamp):
-                    try:
-                        val = T(val)
-                        break
-                    except Exception as e:
-                        continue
+            for T in [int, float, info_timestamp]:
+                try:
+                    value = T(value)
+                    break
+                except ValueError:
+                    continue
 
-                metadata[name] = val
-        if metadata['NoS'] != len(data[0]):
-            assert metadata['NoS'] == len(data[0]) - 1
-            e_scale = np.linspace(metadata["Start K.E."], metadata["End K.E."]-metadata['Step Size'], len(data))
-            assert np.allclose(e_scale, np.array(data)[:, 0])
-            return np.array(data, dtype='uint32')[:, 1:], metadata
+            info[quantity] = (value, unit)
+        return info
 
-        return np.array(data, dtype='uint32'), metadata
+
+def parse_xas(fname, zip_fname=None):
+    with load(fname, zip_fname) as f:
+        arr = np.loadtxt(f)
+        return XASpectrum(arr[:, 0],
+                          arr[:, 5],
+                          arr[:, 6],
+                          arr[:, 4],
+                          arr[:, 8],
+                          arr[:, 9],
+                          arr[:, 7],
+                          arr[:, 2])
 
 
 class MBSFilePathGenerator(object):
@@ -90,11 +148,20 @@ class MBSFilePathGenerator(object):
         self.prefix = prefix
         self.directory = directory or ""
     
-    def __call__(self, number, region):
+    def __call__(self, number, region=None):
         if isinstance(number, Iterable):
             return [self(n, region) for n in number]
         if isinstance(region, Iterable):
             return [self(number, r) for r in region]
         
+        if region is None:
+            num_re = re.compile('{}{:05d}_\d{{5}}.txt'.format(self.prefix, number))
+            paths = list(filter(lambda x: num_re.fullmatch(x), os.listdir(self.directory or '.')))
+            if not paths:
+                raise Exception('No files found for {}{:05d}_'.format(self.prefix, number))
+            elif len(paths) == 1:
+                return paths[0]
+            return paths
+
         fname = "{}{:05d}_{:05d}.txt".format(self.prefix, number, region)
         return os.path.join(self.directory, fname)
