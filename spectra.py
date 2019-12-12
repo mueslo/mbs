@@ -87,8 +87,8 @@ class Spectrum(object):
         kwargs.setdefault('cmap', 'gist_yarg')
         kwargs.setdefault('vmin', np.percentile(self._data, 5))
         kwargs.setdefault('vmax', np.percentile(self._data, 99.5))
-        ax.imshow(self._data, origin='lower', extent=extent, aspect=(extent[1] - extent[0]) / (extent[3] - extent[2]),
-                  **kwargs)
+        kwargs.setdefault('aspect', (extent[1] - extent[0]) / (extent[3] - extent[2]))
+        ax.imshow(self._data, origin='lower', extent=extent, **kwargs)
         ax.set_ylabel(r'$E_\mathrm{kin}$ / eV')
         ax.set_xlabel(self['XScaleName'])
 

@@ -59,7 +59,24 @@ def load(fname, zip_fname=None):
                     yield f
 
 
-io_cache = {}
+# from https://stackoverflow.com/a/2437645/
+class LimitedSizeDict(OrderedDict):
+    def __init__(self, *args, **kwds):
+        self.size_limit = kwds.pop("size_limit", None)
+        OrderedDict.__init__(self, *args, **kwds)
+        self._check_size_limit()
+
+    def __setitem__(self, key, value):
+        OrderedDict.__setitem__(self, key, value)
+        self._check_size_limit()
+
+    def _check_size_limit(self):
+        if self.size_limit is not None:
+            while len(self) > self.size_limit:
+                self.popitem(last=False)
+
+
+io_cache = LimitedSizeDict(size_limit=128)
 def parse_data(fname, metadata_only=False, zip_fname=None):
     def parse_data_inner():
         with load(fname, zip_fname) as f:
