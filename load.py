@@ -114,7 +114,7 @@ def parse_data(fname, metadata_only=False, zip_fname=None):
 
     try:
         key = (fname, metadata_only, zip_fname)
-        file = fname or zip_fname
+        file = zip_fname or fname
         mtime = os.path.getmtime(file)
         rv, mtime_cached = io_cache[key]
 
@@ -174,8 +174,10 @@ class MBSFilePathGenerator(object):
         if region is None:
             num_re = re.compile('{}{:05d}_\d{{5}}.txt'.format(self.prefix, number))
             paths = list(filter(lambda x: num_re.fullmatch(x), os.listdir(self.directory or '.')))
+            if self.directory:
+                paths = [os.path.join(self.directory, p) for p in paths]
             if not paths:
-                raise Exception('No files found for {}{:05d}_'.format(self.prefix, number))
+                raise Exception('No files found for {}{:05d}_#####.txt'.format(self.prefix, number))
             elif len(paths) == 1:
                 return paths[0]
             return paths

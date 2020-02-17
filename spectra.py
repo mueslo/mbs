@@ -88,11 +88,13 @@ class Spectrum(object):
         kwargs.setdefault('vmin', np.percentile(self._data, 5))
         kwargs.setdefault('vmax', np.percentile(self._data, 99.5))
         kwargs.setdefault('aspect', (extent[1] - extent[0]) / (extent[3] - extent[2]))
-        ax.imshow(self._data, origin='lower', extent=extent, **kwargs)
+        im = ax.imshow(self._data, origin='lower', extent=extent, **kwargs)
         ax.set_ylabel(r'$E_\mathrm{kin}$ / eV')
         ax.set_xlabel(self['XScaleName'])
+        return im
 
     def plot_edc(self, ax, e_f=None, **kwargs):
+        show_counts = kwargs.pop('show_counts', False)
         if e_f is not None:
             x_scale = e_f - self.energy_scale
             xlabel = r'$E_\mathrm{bind}$ / eV'
@@ -100,10 +102,15 @@ class Spectrum(object):
         else:
             x_scale = self.energy_scale
             xlabel = r'$E_\mathrm{kin}$ / eV'
-        ax.plot(x_scale, np.sum(self._data, axis=1), **kwargs)
+        lines = ax.plot(x_scale, np.sum(self._data, axis=1), **kwargs)
         ax.set_xlabel(xlabel)
         ax.set_ylabel('Intensity')
-        ax.set_yticks([], [])
+        if not show_counts:
+            ax.set_yticks([], [])
+        else:
+            ax.ticklabel_format(style='sci', axis='y', scilimits=(0, 0), useMathText=True)
+
+        return lines
 
     def plot_k(self, ax, angle_correction=1., k_origin=None, Ef=None, V0=0, **kwargs):
         if not self['Lens Mode'].startswith('L4Ang'):
@@ -129,8 +136,9 @@ class Spectrum(object):
             Y2 = Y2 - Ef
             ax.set_ylabel(r'$E-E_\mathrm{F}$ / eV')
 
-        ax.pcolormesh(X2, Y2, self._data,
-                      shading='gouraud', **kwargs)
+        im = ax.pcolormesh(X2, Y2, self._data,
+                           shading='gouraud', **kwargs)
+        return im
 
     def get_focus(self):
         assert not self['Lens Mode'].startswith('L4Ang')
