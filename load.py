@@ -105,7 +105,7 @@ def parse_data(fname, metadata_only=False, zip_fname=None):
                         print('Warning, duplicate field', name)
                     metadata[name] = val
             if metadata['NoS'] != len(data[0]):
-                assert metadata['NoS'] == len(data[0]) - 1
+                assert metadata['NoS'] == len(data[0]) - 1 or len(data[0]) == 2  # resolved or integrated mode
                 e_scale = np.linspace(metadata["Start K.E."], metadata["End K.E."]-metadata['Step Size'], len(data))
                 assert np.allclose(e_scale, np.array(data)[:, 0])
                 return np.array(data, dtype='uint32')[:, 1:], metadata

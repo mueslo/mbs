@@ -6,6 +6,7 @@ from .load import parse_data, parse_info
 
 import numpy as np
 
+
 class Spectrum(object):
     def __init__(self, data, metadata):
         self._data = data
@@ -95,14 +96,27 @@ class Spectrum(object):
 
     def plot_edc(self, ax, e_f=None, **kwargs):
         show_counts = kwargs.pop('show_counts', False)
+        annotations = kwargs.pop('annotations', {})
         if e_f is not None:
             x_scale = e_f - self.energy_scale
             xlabel = r'$E_\mathrm{bind}$ / eV'
-            ax.invert_xaxis()
+            if not ax.xaxis_inverted():
+                ax.invert_xaxis()
         else:
             x_scale = self.energy_scale
             xlabel = r'$E_\mathrm{kin}$ / eV'
-        lines = ax.plot(x_scale, np.sum(self._data, axis=1), **kwargs)
+        y_data = np.sum(self._data, axis=1)
+
+        for x, (text, akw) in annotations.items():
+            akw.setdefault('ha', 'center')
+            akw.setdefault('va', 'bottom')
+            akw.setdefault('rotation', 90)
+            # y = y_data[np.argmin(np.abs(x_scale - x))]
+            y = np.max(y_data[np.abs(x_scale-x) < 5])
+            offset = 0.05 * np.max(y_data)
+            ax.text(x, y+offset, text, **akw)
+
+        lines = ax.plot(x_scale, y_data, **kwargs)
         ax.set_xlabel(xlabel)
         ax.set_ylabel('Intensity')
         if not show_counts:
