@@ -31,9 +31,6 @@ class Spectrum(object):
         except IOError:
             return None
 
-    def __getitem__(self, item):
-        return self._metadata[item]
-
     @property
     def lens_extent(self):
         return self['XScaleMin'], self['XScaleMax']
@@ -41,6 +38,9 @@ class Spectrum(object):
     @property
     def lens_scale(self):
         return np.linspace(self['XScaleMin'], self['XScaleMax'], self['NoS'])
+
+    def l_to_i(self, e):
+        return (np.abs(self.lens_scale - e)).argmin()
 
     @property
     def energy_extent(self):
@@ -53,11 +53,31 @@ class Spectrum(object):
                            len(self._data))
         #return np.arange(self['Start K.E.'], self['End K.E.'], self['Step Size'])
 
+    def e_to_i(self, e):
+        return (np.abs(self.energy_scale - e)).argmin()
+
     @property
     def name(self):
         return self['Gen. Name']
 
+    def _translate_slice(self, slicetuple):
+        slice_axis, slice_energy = slicetuple
+
+        return (slice(*list(map(self.l_to_i, [slice_axis.start, slice_axis.stop, None]))),
+                slice(*list(map(self.e_to_i, [slice_energy.start, slice_energy.stop, None]))))
+
+    def __getitem__(self, key):
+        if isinstance(key, tuple):
+            slice_lens, slice_energy = self._translate_slice(key)
+            new_data = self._data[slice_lens, slice_energy]
+            #todo lens scales! how?
+        elif isinstance(key, str):
+            return self._metadata[key]
+
     def __add__(self, other):
+        if isinstance(other, int) and other == 0:
+            return self
+        
         # assert angle/energy extent is the same
         assert (self.lens_scale == other.lens_scale).all()
         assert (self.energy_scale == other.energy_scale).all()
@@ -77,22 +97,22 @@ class Spectrum(object):
 
         return SpectrumSum(self._data + other._data, m + om)
 
-    def x_to_idx(self, x):
-        pass
-
-    def y_to_idx(self, y):
-        pass
-
     def plot(self, ax, angle_correction=1., **kwargs):
         extent = self.lens_extent + self.energy_extent
         kwargs.setdefault('cmap', 'gist_yarg')
         kwargs.setdefault('vmin', np.percentile(self._data, 5))
         kwargs.setdefault('vmax', np.percentile(self._data, 99.5))
         kwargs.setdefault('aspect', (extent[1] - extent[0]) / (extent[3] - extent[2]))
-        im = ax.imshow(self._data, origin='lower', extent=extent, **kwargs)
+        kwargs.setdefault('extent', extent)
+        kwargs.setdefault('origin', 'lower')
+        im = ax.imshow(self._data, **kwargs)
         ax.set_ylabel(r'$E_\mathrm{kin}$ / eV')
         ax.set_xlabel(self['XScaleName'])
         return im
+
+    @property
+    def edc(self):
+        return np.sum(self._data, axis=1)
 
     def plot_edc(self, ax, e_f=None, **kwargs):
         show_counts = kwargs.pop('show_counts', False)
@@ -120,7 +140,7 @@ class Spectrum(object):
         ax.set_xlabel(xlabel)
         ax.set_ylabel('Intensity')
         if not show_counts:
-            ax.set_yticks([], [])
+            ax.set_yticks([])
         else:
             ax.ticklabel_format(style='sci', axis='y', scilimits=(0, 0), useMathText=True)
 

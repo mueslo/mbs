@@ -130,7 +130,7 @@ def opt_global(fits, T, *parsed_data, de=1., plot_fits=False):
 
 
 def plot_opt(paths, params, T, de=1., param_name='measurement param', plot_param="sigma", fit_global=False, plot_fits=False,
-             zip_fname=None):
+             zip_fname=None, label=None):
     dmd = []
     fits = []
     for p in paths:
@@ -145,13 +145,13 @@ def plot_opt(paths, params, T, de=1., param_name='measurement param', plot_param
             fit = fermi_fit(data, metadata, T=T, de=de)
         fits.append(fit)
 
-    plt.plot(params, [fit[plot_param] for fit in fits], 'x', label='individual fit')
+    plt.plot(params, [fit[plot_param] for fit in fits], 'x', label=label or 'individual fit')
     plt.xlabel(param_name)
     plt.ylabel(plot_param)
 
     if fit_global:
         fits_global = opt_global(fits, T, *dmd, de=de, plot_fits=plot_fits)
-        plt.plot(params, [fit[plot_param] for fit in fits_global], 'x', label='global fit')
+        plt.plot(params, [fit[plot_param] for fit in fits_global], 'x', label=label or 'global fit')
         plt.legend()
         return fits, fits_global
 
