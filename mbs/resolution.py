@@ -10,6 +10,8 @@ k_B = 8.617333262145 * 10 ** -5  # eV/K
 
 
 def F(E, E_f, T):
+    if T == 0:
+        return np.heaviside(E_f-E, 0.5)
     return 1/(1+np.exp((E-E_f)/(k_B*T)))
 
 
@@ -29,17 +31,29 @@ def cut(x, y, window):
     return x[idx_start:idx_end], y[idx_start:idx_end]
 
 
-def fermi_fit(data, metadata, T, de=1., ax=None):
+def fl_guess(e_ax, edc):
+    fl = e_ax[np.max(np.argwhere(edc > np.percentile(edc, 95)/2))]
+    #deltaE = e_ax[1]-e_ax[0]
+    #grad = gaussian_filter1d(np.gradient(edc, deltaE), sigma=0.05/deltaE)
+    #fl2 = e_ax[np.argmax(grad)]
+    
+    #plt.figure()
+    #plt.plot(e_ax, grad)
+    #plt.show()
+    #print(f"fl guess old:{fl} new:{fl2}")
+    return fl
+
+def fermi_fit(data, metadata, T, de=1., ax=None, fl=None):
     edc = data.sum(axis=1)
     e_ax = np.linspace(metadata['Start K.E.'], metadata['End K.E.'], len(edc))
-    fl = e_ax[np.max(np.argwhere(edc > np.percentile(edc, 50)))]
+    fl = fl or fl_guess(e_ax, edc)
     window = (fl - de / 2, fl + de / 2)
     cut_e_ax, cut_edc = cut(e_ax, edc, window)
 
     func = make_fe(T, metadata['Step Size'])
 
     initial_guess = (0, max(cut_edc), min(edc), 0.05, fl)
-    bounds = [(-np.inf, -np.inf, 0, 0, window[0]),
+    bounds = [(0, -np.inf, 0, 0, window[0]), # restrict a to be positive
               (np.inf, np.inf, np.inf, np.inf, window[1])]
     fit_params, cov = curve_fit(func, cut_e_ax, cut_edc,
                                 p0=initial_guess,
@@ -50,6 +64,7 @@ def fermi_fit(data, metadata, T, de=1., ax=None):
 
     if ax:
         ax.plot(e_ax, edc, linewidth=0.5)
+        #ax.plot(fit_params_d['a']*cut_e_ax + fit_params_d['b'], ls='--')
         ax.plot(cut_e_ax, func(cut_e_ax, *fit_params))
         ax.set_xlim(cut_e_ax[0], cut_e_ax[-1])
         # ax.plot(cut_e_ax, func(cut_e_ax, *initial_guess), color='k')
@@ -130,28 +145,32 @@ def opt_global(fits, T, *parsed_data, de=1., plot_fits=False):
 
 
 def plot_opt(paths, params, T, de=1., param_name='measurement param', plot_param="sigma", fit_global=False, plot_fits=False,
-             zip_fname=None, label=None):
+             zip_fname=None, fl=None, **plot_kwargs):
     dmd = []
     fits = []
     for p in paths:
         data, metadata = parse_data(p, zip_fname=zip_fname)
         data = data[:, 1:]
         dmd.append((data, metadata))
+        
         if plot_fits:
             plt.figure(figsize=(3, 1))
-            fit = fermi_fit(data, metadata, T=T, de=de, ax=plt.gca())
+            plt.title(p)
+            fit = fermi_fit(data, metadata, T=T, de=de, fl=fl, ax=plt.gca())
             plt.show()
         else:
-            fit = fermi_fit(data, metadata, T=T, de=de)
+            fit = fermi_fit(data, metadata, T=T, de=de, fl=fl)
         fits.append(fit)
 
-    plt.plot(params, [fit[plot_param] for fit in fits], 'x', label=label or 'individual fit')
+    plot_kwargs.setdefault('label', 'individual fit')
+    plt.plot(params, [fit[plot_param] for fit in fits], 'x', **plot_kwargs)
     plt.xlabel(param_name)
     plt.ylabel(plot_param)
 
     if fit_global:
         fits_global = opt_global(fits, T, *dmd, de=de, plot_fits=plot_fits)
-        plt.plot(params, [fit[plot_param] for fit in fits_global], 'x', label=label or 'global fit')
+        plot_kwargs.setdefault('label', 'global fit')
+        plt.plot(params, [fit[plot_param] for fit in fits_global], 'x', **plot_kwargs)
         plt.legend()
         return fits, fits_global
 
