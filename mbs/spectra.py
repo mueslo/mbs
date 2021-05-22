@@ -1,10 +1,14 @@
 import operator
 from functools import reduce
 from os.path import splitext
+from collections import namedtuple
 
 from .load import parse_data, parse_info
 
 import numpy as np
+
+
+scale = namedtuple('Scale', ['min', 'max', 'mult', 'name'])
 
 
 class Spectrum(object):
@@ -32,12 +36,21 @@ class Spectrum(object):
             return None
 
     @property
+    def xscale(self):
+        try:
+            return scale(self['XScaleMin'], self['XScaleMax'], 
+                self['XScaleMult'], self['XScaleName'])
+        except KeyError:
+            return scale(self['ScaleMin'], self['ScaleMax'], 
+                self['ScaleMult'], self['ScaleName'])
+
+    @property
     def lens_extent(self):
-        return self['XScaleMin'], self['XScaleMax']
+        return self.xscale.min, self.xscale.max
 
     @property
     def lens_scale(self):
-        return np.linspace(self['XScaleMin'], self['XScaleMax'], self['NoS'])
+        return np.linspace(self.xscale.min, self.xscale.max, self['NoS'])
 
     def l_to_i(self, e):
         return (np.abs(self.lens_scale - e)).argmin()
@@ -107,7 +120,7 @@ class Spectrum(object):
         kwargs.setdefault('origin', 'lower')
         im = ax.imshow(self._data, **kwargs)
         ax.set_ylabel(r'$E_\mathrm{kin}$ / eV')
-        ax.set_xlabel(self['XScaleName'])
+        ax.set_xlabel(self.xscale.name)
         return im
 
     @property
@@ -226,8 +239,8 @@ class Fermimap(object):
     def plot(self, ax, fl, width=10, lens_angle_c=1., other_angle_c=1., **kwargs):
         fmap = self.generate_fermimap(fl, width)
         # (-0.5, numcols-0.5, numrows-0.5, -0.5)
-        extent = [lens_angle_c * self.spectra[0]['XScaleMin'],
-                  lens_angle_c * self.spectra[0]['XScaleMax'],
+        extent = [lens_angle_c * self.spectra[0].xscale.min,
+                  lens_angle_c * self.spectra[0].xscale.max,
                   other_angle_c * self.angles[0],
                   other_angle_c * self.angles[-1]]
         kwargs.setdefault('cmap', 'inferno')
