@@ -1,9 +1,14 @@
+from os.path import basename
+
 import numpy as np
+import pandas as pd
 from scipy.optimize import curve_fit, least_squares
 from scipy.ndimage import gaussian_filter1d
+from scipy.linalg import svd
 import matplotlib.pyplot as plt
 
 from .load import parse_data
+from .utils import fl_guess
 
 
 k_B = 8.617333262145 * 10 ** -5  # eV/K
@@ -31,40 +36,33 @@ def cut(x, y, window):
     return x[idx_start:idx_end], y[idx_start:idx_end]
 
 
-def fl_guess(e_ax, edc):
-    fl = e_ax[np.max(np.argwhere(edc > np.percentile(edc, 95)/2))]
-    #deltaE = e_ax[1]-e_ax[0]
-    #grad = gaussian_filter1d(np.gradient(edc, deltaE), sigma=0.05/deltaE)
-    #fl2 = e_ax[np.argmax(grad)]
-    
-    #plt.figure()
-    #plt.plot(e_ax, grad)
-    #plt.show()
-    #print(f"fl guess old:{fl} new:{fl2}")
-    return fl
-
 def fermi_fit(data, metadata, T, de=1., ax=None, fl=None):
     edc = data.sum(axis=1)
-    e_ax = np.linspace(metadata['Start K.E.'], metadata['End K.E.'], len(edc))
+    e_ax = np.linspace(metadata['Start K.E.'], metadata['End K.E.'] - metadata['Step Size'], len(edc))
     fl = fl or fl_guess(e_ax, edc)
     window = (fl - de / 2, fl + de / 2)
     cut_e_ax, cut_edc = cut(e_ax, edc, window)
 
     func = make_fe(T, metadata['Step Size'])
 
+    param_names = ["a", "b", "C", "sigma", "E_f"]
     initial_guess = (0, max(cut_edc), min(edc), 0.05, fl)
-    bounds = [(0, -np.inf, 0, 0, window[0]), # restrict a to be positive
+    bounds = [(0, -np.inf, 0, 0, window[0]),  # restrict a to be positive
               (np.inf, np.inf, np.inf, np.inf, window[1])]
     fit_params, cov = curve_fit(func, cut_e_ax, cut_edc,
                                 p0=initial_guess,
                                 bounds=bounds)
-    fit_params_d = dict(zip(["a", "b", "C", "sigma", "E_f"], fit_params))
+
+    fit_params_d = dict(zip(param_names, fit_params))
+    fit_params_d.update(dict(zip([p + '_err' for p in param_names], np.sqrt(np.diag(cov)))))
     fit_params_d['factor'] = 1.
     fit_params_d['fwhm'] = 2.3548 * fit_params_d['sigma']
-
+    fit_params_d['fwhm_err'] = 2.3548 * fit_params_d['sigma_err']
+    
     if ax:
-        ax.plot(e_ax, edc, linewidth=0.5)
-        #ax.plot(fit_params_d['a']*cut_e_ax + fit_params_d['b'], ls='--')
+        ax.plot(cut_e_ax, cut_edc, linewidth=0.5)
+        ax.plot(cut_e_ax, fit_params_d['a']*(cut_e_ax-fit_params_d['E_f']) + fit_params_d['b'], ls='--', color='k', alpha=0.3)
+        ax.axvline(fit_params_d['E_f'], lw=0.5, color='k', alpha=0.3)
         ax.plot(cut_e_ax, func(cut_e_ax, *fit_params))
         ax.set_xlim(cut_e_ax[0], cut_e_ax[-1])
         # ax.plot(cut_e_ax, func(cut_e_ax, *initial_guess), color='k')
@@ -93,14 +91,14 @@ def opt_global(fits, T, *parsed_data, de=1., plot_fits=False):
 
         return np.array(errs)
 
-    a_global = np.mean([fit["a"] for fit in fits])
-    b_global = np.mean([fit["b"] for fit in fits])
-    C_global = np.mean([fit["C"] for fit in fits])
+    a_global = np.average(fits["a"], weights=1/fits["a_err"])
+    b_global = np.average(fits["b"], weights=1/fits["b_err"])
+    C_global = np.average(fits["C"], weights=1/fits["C_err"])
     p_global = [a_global, b_global, C_global]
-    bounds_g = [(-np.inf, np.inf), (-np.inf, np.inf), (0, np.inf)]
+    bounds_g = [(0, np.inf), (-np.inf, np.inf), (0, np.inf)]
 
     xys = []
-    for i, fit in enumerate(fits):
+    for i, fit in fits.iterrows():
         p_global.append(1) # factor
         bounds_g.append((0, np.inf))
 
@@ -122,17 +120,51 @@ def opt_global(fits, T, *parsed_data, de=1., plot_fits=False):
     else:
         p_best = result.x
 
+    # FROM SCIPY # Do Moore-Penrose inverse discarding zero singular values.
+    _, s, VT = svd(result.jac, full_matrices=False)
+    threshold = np.finfo(float).eps * max(result.jac.shape) * s[0]
+    s = s[s > threshold]
+    VT = VT[:s.size]
+    pcov = np.dot(VT.T / s**2, VT)
+    warn_cov = False
+    if pcov is None:
+        # indeterminate covariance
+        pcov = zeros((len(popt), len(popt)), dtype=float)
+        pcov.fill(inf)
+        warn_cov = True
+    else: # elif not absolute sigma (default False)
+        ysize = len(result.fun)
+        cost = 2 * result.cost
+        p0 = np.atleast_1d(p_global)
+        if ysize > p0.size:
+            s_sq = cost / (ysize - p0.size)
+            pcov = pcov * s_sq
+        else:
+            pcov.fill(inf)
+            warn_cov = True
+    #############
+    
+    perr = np.sqrt(np.diag(pcov))
+
     fits_global = []
-    for i, p in enumerate(fits):
+    for i, p in fits.iterrows():
         factor = p_best[3+3*i] # factor
         p_i = p_best[0], p_best[1], p_best[2], p_best[3+3*i+1], p_best[3+3*i+2] # a, b, C, sigma, E_f
+        
+        factor_err = perr[3+3*i]
+        perr_i = perr[0], perr[1], perr[2], perr[3+3*i+1], perr[3+3*i+2] # a, b, C, sigma, E_f
+        
         x, y = xys[2*i:2*i+2]
 
         #print('factor', repr(factor))
-        fit = dict(zip(["factor", "a", "b", "C", "sigma", "E_f"], (factor,)+p_i))
+        param_names = ["factor", "a", "b", "C", "sigma", "E_f"]
+        fit = dict(zip(param_names, (factor,)+p_i))
+        fit.update(dict(zip([p+'_err' for p in param_names], (factor_err,)+perr_i)))
+        
         fit['fwhm'] = 2.3548 * fit['sigma']
+        fit['fwhm_err'] = 2.3548 * fit['sigma_err']
         fits_global.append(fit)
-        #print(fit)
+
         if plot_fits:
             plt.figure(figsize=(3, 1))
             plt.plot(np.linspace(parsed_data[i][1]['Start K.E.'],
@@ -141,7 +173,7 @@ def opt_global(fits, T, *parsed_data, de=1., plot_fits=False):
             plt.xlim(x[0], x[-1])
             plt.show()
 
-    return fits_global
+    return pd.DataFrame(fits_global)
 
 
 def plot_opt(paths, params, T, de=1., param_name='measurement param', plot_param="sigma", fit_global=False, plot_fits=False,
@@ -160,18 +192,40 @@ def plot_opt(paths, params, T, de=1., param_name='measurement param', plot_param
             plt.show()
         else:
             fit = fermi_fit(data, metadata, T=T, de=de, fl=fl)
+        fit['filename'] = basename(p)
         fits.append(fit)
+    fits = pd.DataFrame(fits)
 
     plot_kwargs.setdefault('label', 'individual fit')
-    plt.plot(params, [fit[plot_param] for fit in fits], 'x', **plot_kwargs)
+    plot_kwargs.setdefault('marker', 'x')
+    plot_kwargs.setdefault('linestyle', '')
+    plot_kwargs.setdefault('capsize', 4)
+    y = fits[plot_param]
+    yerr = fits[plot_param+'_err']
+    markers, caps, bars = plt.errorbar(params, y, yerr=yerr, **plot_kwargs)
+    
+    dy = max(y) - min(y)
+    plt.ylim([min(y)-dy/20, max(y)+dy/20])
+    
+    [c.set_alpha(0.2) for c in caps]
+    [b.set_alpha(0.2) for b in bars]
     plt.xlabel(param_name)
     plt.ylabel(plot_param)
 
     if fit_global:
+        print('starting global fit')
+        if plot_kwargs['label'] == 'individual fit':
+            del plot_kwargs['label']
         fits_global = opt_global(fits, T, *dmd, de=de, plot_fits=plot_fits)
+        fits_global['filename'] = fits['filename']
         plot_kwargs.setdefault('label', 'global fit')
-        plt.plot(params, [fit[plot_param] for fit in fits_global], 'x', **plot_kwargs)
+        
+        y = fits_global[plot_param]
+        yerr = fits_global[plot_param+'_err']
+        markers, caps, bars = plt.errorbar(params, y, yerr=yerr, **plot_kwargs)
+        [c.set_alpha(0.2) for c in caps]
+        [b.set_alpha(0.2) for b in bars]
         plt.legend()
-        return fits, fits_global
+        return fits_global
 
     return fits

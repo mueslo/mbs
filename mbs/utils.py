@@ -5,10 +5,24 @@ import sys
 
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy.ndimage import gaussian_filter1d
 
 from .load import parse_data, is_mbs_filename
 
 cwd = os.getcwd()
+
+
+def fl_guess(e_ax, edc):
+    #fl = e_ax[np.max(np.argwhere(edc > np.percentile(edc, 95)/2))]
+    deltaE = np.diff(e_ax)
+    assert np.allclose(deltaE, deltaE[0])
+    deltaE = deltaE[0]
+    
+    grad = np.gradient(edc/np.max(edc), deltaE)
+    grad = gaussian_filter1d(grad, sigma=0.1/deltaE)
+    fl2 = e_ax[np.argmin(grad)]
+    
+    return fl2
 
 
 def make_preview(ax, data, metadata, ax_edc=None, ax_mdc=None, **kwargs):
