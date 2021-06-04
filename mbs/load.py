@@ -13,7 +13,7 @@ info_timestamp = lambda s: datetime.datetime.strptime(s.strip(), "%d/%m/%Y %H:%M
 frame_unit = datetime.timedelta(seconds=0.001)
 fname_re = re.compile(r'.*(?P<number>\d{5})_(?P<region>\d{5}).txt')
 info_re = re.compile(r"^([^:]+):\s*([^(]+)\s*(\(([^)]+)\))?")
-XASpectrum = namedtuple('XASpectrum', ['e', 'i0', 'sample', 'ref', 'i0_v', 'sample_v', 'ref_v', 'gap'])
+XASpectrum = namedtuple('XASpectrum', ['e', 'i0', 'sample', 'ref', 'i0_v', 'sample_v', 'ref_v', 'gap', 'fname'])
 
 def is_mbs_filename(path):     
      fname = os.path.basename(path)
@@ -76,42 +76,42 @@ class LimitedSizeDict(OrderedDict):
                 self.popitem(last=False)
 
 
+def parse_data_inner(f, metadata_only=False):
+        data_flag = False
+        data = []
+        metadata = OrderedDict()
+        for line in f:
+            if data_flag:
+                data.append(list(map(float, line.split())))
+            elif line.startswith('DATA:'):
+                if metadata_only:
+                    return metadata
+                data_flag = True
+            else:
+                name, val = line.split('\t', 1)
+                val = val.strip()
+
+                for T in (int, float, mbs_timestamp, mbs_boolean):
+                    try:
+                        val = T(val)
+                        break
+                    except Exception as e:
+                        continue
+
+                if name in metadata:
+                    print('Warning, duplicate field', name)
+                metadata[name] = val
+        if metadata['NoS'] != len(data[0]):
+            assert metadata['NoS'] == len(data[0]) - 1 or len(data[0]) == 2  # resolved or integrated mode
+            e_scale = np.linspace(metadata["Start K.E."], metadata["End K.E."]-metadata['Step Size'], len(data))
+            assert np.allclose(e_scale, np.array(data)[:, 0])
+            return np.array(data, dtype='uint32')[:, 1:], metadata
+
+        return np.array(data, dtype='uint32'), metadata
+
+
 io_cache = LimitedSizeDict(size_limit=128)
 def parse_data(fname, metadata_only=False, zip_fname=None):
-    def parse_data_inner():
-        with load(fname, zip_fname) as f:
-            data_flag = False
-            data = []
-            metadata = OrderedDict()
-            for line in f:
-                if data_flag:
-                    data.append(list(map(float, line.split())))
-                elif line.startswith('DATA:'):
-                    if metadata_only:
-                        return metadata
-                    data_flag = True
-                else:
-                    name, val = line.split('\t', 1)
-                    val = val.strip()
-
-                    for T in (int, float, mbs_timestamp, mbs_boolean):
-                        try:
-                            val = T(val)
-                            break
-                        except Exception as e:
-                            continue
-
-                    if name in metadata:
-                        print('Warning, duplicate field', name)
-                    metadata[name] = val
-            if metadata['NoS'] != len(data[0]):
-                assert metadata['NoS'] == len(data[0]) - 1 or len(data[0]) == 2  # resolved or integrated mode
-                e_scale = np.linspace(metadata["Start K.E."], metadata["End K.E."]-metadata['Step Size'], len(data))
-                assert np.allclose(e_scale, np.array(data)[:, 0])
-                return np.array(data, dtype='uint32')[:, 1:], metadata
-
-            return np.array(data, dtype='uint32'), metadata
-
     try:
         key = (fname, metadata_only, zip_fname)
         file = zip_fname or fname
@@ -125,9 +125,11 @@ def parse_data(fname, metadata_only=False, zip_fname=None):
         return rv
 
     except KeyError as ke:
-        rv = parse_data_inner()
+        with load(fname, zip_fname) as f:
+            rv = parse_data_inner(f, metadata_only=metadata_only)
         io_cache[key] = (rv, mtime)
         return rv
+
 
 def parse_info(fname, zip_fname=None):
     with load(fname, zip_fname) as f:
@@ -151,13 +153,11 @@ def parse_xas(fname, zip_fname=None):
     with load(fname, zip_fname) as f:
         arr = np.loadtxt(f)
         return XASpectrum(arr[:, 0],
-                          arr[:, 5],
-                          arr[:, 6],
-                          arr[:, 4],
-                          arr[:, 8],
-                          arr[:, 9],
-                          arr[:, 7],
-                          arr[:, 2])
+                          arr[:, 5], arr[:, 6], arr[:, 4],
+                          arr[:, 8], arr[:, 9], arr[:, 7],
+                          arr[:, 2],
+                          (fname, zip_fname),
+                         )
 
 
 class MBSFilePathGenerator(object):
