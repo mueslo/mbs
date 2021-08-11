@@ -5,7 +5,7 @@ import numpy as np
 import datetime
 import zipfile
 from contextlib import contextmanager
-from collections import OrderedDict, namedtuple
+from collections import OrderedDict
 from collections.abc import Iterable
 
 mbs_timestamp = lambda s: datetime.datetime.strptime(s.strip(), "%d/%m/%Y   %H:%M")
@@ -13,7 +13,6 @@ info_timestamp = lambda s: datetime.datetime.strptime(s.strip(), "%d/%m/%Y %H:%M
 frame_unit = datetime.timedelta(seconds=0.001)
 fname_re = re.compile(r'.*(?P<number>\d{5})_(?P<region>\d{5}).txt')
 info_re = re.compile(r"^([^:]+):\s*([^(]+)\s*(\(([^)]+)\))?")
-XASpectrum = namedtuple('XASpectrum', ['e', 'i0', 'sample', 'ref', 'i0_v', 'sample_v', 'ref_v', 'gap', 'fname'])
 
 def is_mbs_filename(path):     
      fname = os.path.basename(path)
@@ -39,7 +38,6 @@ def stats(metadata):
         s['acqtime'] = metadata['ActScans'] * metadata['TotSteps'] * metadata['Frames Per Step'] * frame_unit
         s['eff_acqtime'] =  metadata['ActScans'] * metadata['No. Steps'] * metadata['Frames Per Step'] * frame_unit
     elif metadata['AcqMode'] == 'Dither':
-        print('dither!')
         s['acqtime'] = metadata['ActScans'] * metadata['TotSteps'] * metadata['Frames Per Step'] * frame_unit
         s['eff_acqtime'] = metadata['ActScans'] * metadata['TotSteps'] * (metadata['No. Steps'] - metadata['TotSteps'])/metadata['No. Steps'] * metadata['Frames Per Step'] * frame_unit
         
@@ -76,11 +74,11 @@ class LimitedSizeDict(OrderedDict):
                 self.popitem(last=False)
 
 
-def parse_data_inner(f, metadata_only=False):
+def parse_lines(lines, metadata_only=False):
         data_flag = False
         data = []
         metadata = OrderedDict()
-        for line in f:
+        for line in lines:
             if data_flag:
                 data.append(list(map(float, line.split())))
             elif line.startswith('DATA:'):
@@ -126,7 +124,7 @@ def parse_data(fname, metadata_only=False, zip_fname=None):
 
     except KeyError as ke:
         with load(fname, zip_fname) as f:
-            rv = parse_data_inner(f, metadata_only=metadata_only)
+            rv = parse_lines(f, metadata_only=metadata_only)
         io_cache[key] = (rv, mtime)
         return rv
 
@@ -147,17 +145,6 @@ def parse_info(fname, zip_fname=None):
 
             info[quantity] = (value, unit)
         return info
-
-
-def parse_xas(fname, zip_fname=None):
-    with load(fname, zip_fname) as f:
-        arr = np.loadtxt(f)
-        return XASpectrum(arr[:, 0],
-                          arr[:, 5], arr[:, 6], arr[:, 4],
-                          arr[:, 8], arr[:, 9], arr[:, 7],
-                          arr[:, 2],
-                          (fname, zip_fname),
-                         )
 
 
 class MBSFilePathGenerator(object):

@@ -2,26 +2,57 @@ import operator
 from functools import reduce
 from os.path import splitext
 from collections import namedtuple
+from enum import Enum
+from copy import copy as shallow_copy
 
-from .load import parse_data, parse_info
+from .load import parse_data, parse_lines, parse_info
+from .krx import KRXFile
+from .utils import fl_guess
 
 import numpy as np
+from scipy.ndimage import gaussian_filter
 
 
-scale = namedtuple('Scale', ['min', 'max', 'mult', 'name'])
-
+scale = namedtuple('Scale', ['min', 'max', 'step', 'name'])
+AcqMode = Enum('AcquisitionMode', 'Fixed Swept Dither')
 
 class Spectrum(object):
     def __init__(self, data, metadata):
         self._data = data
+        self._view = (slice(None),) * data.ndim
         self._metadata = metadata
         self._path = None
+
+        if self.acq_mode == AcqMode.Dither:
+            self._view = slice(0, -self['DithSteps']), self._view[1]
 
     @classmethod
     def from_filename(cls, fname, zip_fname=None):
         spec = cls(*parse_data(fname, zip_fname=zip_fname))
         spec._path = fname, zip_fname
         return spec
+
+    @classmethod
+    def from_krx(cls, fname, page=0):
+        kf = KRXFile(fname)
+        metadata = parse_lines(
+            kf.page_metadata(page).splitlines(), 
+            metadata_only=True)
+        spec = cls(data=kf.page(page), metadata=metadata)
+        spec._path = fname, None
+        return spec
+
+    @property
+    def acq_mode(self):
+        return AcqMode[self['AcqMode']]
+
+    @property
+    def data(self):
+        return self._data[self._view]
+
+    @property
+    def masked_data(self):
+        return np.ma.masked_array(self.data, mask=getattr(self, 'mask'))
 
     @property
     def info(self):
@@ -36,7 +67,7 @@ class Spectrum(object):
             return None
 
     @property
-    def xscale(self):
+    def _xscale(self):
         try:
             return scale(self['XScaleMin'], self['XScaleMax'], 
                 self['XScaleMult'], self['XScaleName'])
@@ -45,28 +76,35 @@ class Spectrum(object):
                 self['ScaleMult'], self['ScaleName'])
 
     @property
-    def lens_extent(self):
-        return self.xscale.min, self.xscale.max
-
-    @property
     def lens_scale(self):
-        return np.linspace(self.xscale.min, self.xscale.max, self['NoS'])
-
-    def l_to_i(self, e):
-        return (np.abs(self.lens_scale - e)).argmin()
+        return np.linspace(self._xscale.min, self._xscale.max, self['NoS'])[self._view[1]]
 
     @property
-    def energy_extent(self):
-        return self['Start K.E.'], self['End K.E.']
+    def lens_extent(self):
+        return tuple(self.lens_scale[[0, -1]])
+
+    def l_to_i(self, l):
+        if l is None:
+            return None
+        return (np.abs(self.lens_scale - l)).argmin()
+
+    @property
+    def _escale(self):
+        return scale(self["Start K.E."], self["End K.E."] - self['Step Size'], 
+            self['Step Size'], 'Energy')
 
     @property
     def energy_scale(self):
-        return np.linspace(self["Start K.E."],
-                           self["End K.E."] - self['Step Size'],
-                           len(self._data))
+        return np.linspace(self._escale.min, self._escale.max, len(self._data))[self._view[0]]
         #return np.arange(self['Start K.E.'], self['End K.E.'], self['Step Size'])
 
+    @property
+    def energy_extent(self):
+        return tuple(self.energy_scale[[0, -1]])
+
     def e_to_i(self, e):
+        if e is None:
+            return None
         return (np.abs(self.energy_scale - e)).argmin()
 
     @property
@@ -74,18 +112,24 @@ class Spectrum(object):
         return self['Gen. Name']
 
     def _translate_slice(self, slicetuple):
-        slice_axis, slice_energy = slicetuple
+        slice_energy, slice_lens = slicetuple
+        # todo: slice(None)
+        return (slice(*list(map(self.e_to_i, [slice_energy.start, slice_energy.stop]))),
+                slice(*list(map(self.l_to_i, [slice_lens.start, slice_lens.stop]))))
 
-        return (slice(*list(map(self.l_to_i, [slice_axis.start, slice_axis.stop, None]))),
-                slice(*list(map(self.e_to_i, [slice_energy.start, slice_energy.stop, None]))))
+    def get_metadata(self, key):
+        return self._metadata[key]
 
     def __getitem__(self, key):
+        if isinstance(key, slice):
+            key = (key, slice(None))
         if isinstance(key, tuple):
-            slice_lens, slice_energy = self._translate_slice(key)
-            new_data = self._data[slice_lens, slice_energy]
-            #todo lens scales! how?
+            spec = shallow_copy(self)
+            spec._view = self._translate_slice(key)
+            return spec
+
         elif isinstance(key, str):
-            return self._metadata[key]
+            return self.get_metadata(key)
 
     def __add__(self, other):
         if isinstance(other, int) and other == 0:
@@ -106,28 +150,31 @@ class Spectrum(object):
         elif isinstance(other, Spectrum):
             om = [other._metadata]
         else:
-            return Exception('Operation not supported {}+{}'.format(type(self), type(other)))
+            return NotImplemented
 
         return SpectrumSum(self._data + other._data, m + om)
+
+    def __radd__(self, other):
+        return self.__add__(other)
 
     def plot(self, ax, angle_correction=1., **kwargs):
         extent = self.lens_extent + self.energy_extent
         kwargs.setdefault('cmap', 'gist_yarg')
-        kwargs.setdefault('vmin', np.percentile(self._data, 5))
-        kwargs.setdefault('vmax', np.percentile(self._data, 99.5))
-        kwargs.setdefault('aspect', (extent[1] - extent[0]) / (extent[3] - extent[2]))
+        kwargs.setdefault('vmin', np.percentile(self.data, 5))
+        kwargs.setdefault('vmax', np.percentile(self.data, 99.5))
+        kwargs.setdefault('aspect', 'auto')
         kwargs.setdefault('extent', extent)
         kwargs.setdefault('origin', 'lower')
-        im = ax.imshow(self._data, **kwargs)
+        im = ax.imshow(self.data, **kwargs)
         ax.set_ylabel(r'$E_\mathrm{kin}$ / eV')
-        ax.set_xlabel(self.xscale.name)
+        ax.set_xlabel(self._xscale.name)
         return im
 
     @property
     def edc(self):
-        return np.sum(self._data, axis=1)
+        return np.sum(self.data, axis=1)
 
-    def plot_edc(self, ax, e_f=None, **kwargs):
+    def plot_edc(self, ax, e_f=None, norm=None, **kwargs):
         show_counts = kwargs.pop('show_counts', False)
         annotations = kwargs.pop('annotations', {})
         if e_f is not None:
@@ -138,7 +185,15 @@ class Spectrum(object):
         else:
             x_scale = self.energy_scale
             xlabel = r'$E_\mathrm{kin}$ / eV'
-        y_data = np.sum(self._data, axis=1)
+        y_data = np.sum(self.data, axis=1)
+        if norm == 'max':
+            y_data = y_data / y_data.max()
+        elif norm == 'maxmin':
+            y_data = (y_data - y_data.min()) / (y_data.max() - y_data.min())
+        elif norm == 'sum':
+            y_data = y_data/y_data.sum()
+        else:
+            raise NotImplementedError
 
         for x, (text, akw) in annotations.items():
             akw.setdefault('ha', 'center')
@@ -170,9 +225,10 @@ class Spectrum(object):
         Y2 = Y
         X2 = np.sqrt(Y - 4) * 0.512 * np.sin(np.radians(X))  # + np.cos(np.radians(30))*Y*5.068*10**-4
         kwargs.setdefault('cmap', 'gist_yarg')
-        kwargs.setdefault('vmin', np.percentile(self._data, 5))
-        kwargs.setdefault('vmax', np.percentile(self._data, 99.5))
-
+        kwargs.setdefault('vmin', np.percentile(self.data, 5))
+        kwargs.setdefault('vmax', np.percentile(self.data, 99.5))
+        kwargs.setdefault('shading', 'gouraud')
+        kwargs.setdefault('rasterized', True)
         if k_origin:
             X2 = X2 - k_origin
 
@@ -183,13 +239,12 @@ class Spectrum(object):
             Y2 = Y2 - Ef
             ax.set_ylabel(r'$E-E_\mathrm{F}$ / eV')
 
-        im = ax.pcolormesh(X2, Y2, self._data,
-                           shading='gouraud', **kwargs)
+        im = ax.pcolormesh(X2, Y2, self.data, **kwargs)
         return im
 
     def get_focus(self):
         assert not self['Lens Mode'].startswith('L4Ang')
-        focus = np.sum(self._data, axis=0)
+        focus = np.sum(self.data, axis=0)
         mean = np.average(self.lens_scale, weights=focus)
         std = np.sqrt(np.average((self.lens_scale - mean)**2, weights=focus))
         skew = np.average((self.lens_scale - mean)**3, weights=focus) / (std**3)
@@ -207,7 +262,7 @@ class SpectrumSum(Spectrum):
                    for fname in fnames]
         return cls.from_spectra(*spectra)
 
-    def __getitem__(self, item):
+    def get_metadata(self, item):
         vals = [m[item] for m in self._metadata]
         if not vals or vals.count(vals[0]) == len(vals):
             return vals[0]
@@ -219,35 +274,79 @@ class SpectrumSum(Spectrum):
         return 'Sum of ' + ', '.join(self['Gen. Name'])
 
 
-class Fermimap(object):
-    def __init__(self, spectra, angles):
+class SpectrumMap(object):  # 1D parameter space for now
+    _param_name = 'params'
+    def __init__(self, spectra, **kwargs):
+        params = kwargs.get(self._param_name, range(len(spectra)))
+        assert len(spectra) == len(params)
         self.spectra = spectra
-        self.angles = angles
+        self.params = params
 
     @classmethod
-    def from_filenames(cls, fnames, angles, zip_fname=None):
-        return cls(
-            spectra=[Spectrum(*parse_data(fname, zip_fname=zip_fname)) for fname in fnames],
-            angles=angles)
+    def from_filenames(cls, fnames, zip_fname=None, **kwargs):
+        spectra = [Spectrum.from_filename(fname, zip_fname=zip_fname) for fname in fnames]
+        return cls(spectra=spectra, **kwargs)
 
-    def generate_fermimap(self, fl, width):
+    @classmethod
+    def from_krx(cls, fname, **kwargs):
+        kf = KRXFile(fname)
+        spectra = [Spectrum.from_krx(fname, i) for i in range(kf.num_pages)]
+        s = spectra[0]
+        if 'MapCoordinate' in s._metadata:
+            assert kf.num_pages == s['MapNoXSteps']
+            kwargs.setdefault(cls._param_name, 
+                np.linspace(s['MapStartX'], s['MapEndX'], s['MapNoXSteps'])) 
+        return cls(spectra=spectra, **kwargs)
+
+    def __getattr__(self, attr):
+        if attr == self._param_name:
+            return self.params
+        raise AttributeError
+
+    @property
+    def array(self):
+        return np.stack([s.data for s in self.spectra])
+
+    def generate_fermimap(self, fl, width, dither_repair=False):
         fmap = []
-        for s in self.spectra:
-            fmap.append(np.average(s._data[-width + fl:fl + width], axis=0))
-        return np.array(fmap)
+        if isinstance(fl, int):
+            fl = [fl] * len(self.spectra)
+        for s, fl in zip(self.spectra, fl):
+            fmap.append(s.data[-width + fl:fl + width].mean(axis=0))
 
-    def plot(self, ax, fl, width=10, lens_angle_c=1., other_angle_c=1., **kwargs):
-        fmap = self.generate_fermimap(fl, width)
+        fmap = np.array(fmap)
+        if dither_repair:
+            invalid_area = fmap < 0.1*np.median(fmap)
+            invalid_area[:, np.average(invalid_area, axis=0) > 0.9] = True
+            fmap_ma = np.ma.masked_where(invalid_area, fmap)
+            lens_profile = fmap_ma.sum(axis=0)
+            fmap = fmap * gaussian_filter(lens_profile, 40)/lens_profile
+        return fmap
+
+class AngleMap(SpectrumMap):
+    _param_name = 'angles'
+    _param_label = 'Angle / deg'
+
+    def plot(self, ax, lens_angle_c=1., other_angle_c=1., **kwargs):
+        try:
+            fmap = kwargs.pop('fmap')
+        except KeyError:
+            fmap = self.generate_fermimap(
+                kwargs.pop('fl'), kwargs.pop('width', 10), kwargs.pop('dither_repair', False))
+
         # (-0.5, numcols-0.5, numrows-0.5, -0.5)
-        extent = [lens_angle_c * self.spectra[0].xscale.min,
-                  lens_angle_c * self.spectra[0].xscale.max,
-                  other_angle_c * self.angles[0],
-                  other_angle_c * self.angles[-1]]
+        s = self.spectra[0]
+        da = (self.angles[-1] - self.angles[0])/len(self.angles)
+        dl = (s.lens_scale[-1] - s.lens_scale[0])/len(s.lens_scale)
+        extent = [lens_angle_c * (s.lens_scale[0] - dl/2),
+                  lens_angle_c * (s.lens_scale[-1] + dl/2),
+                  other_angle_c * (self.angles[0] - da/2),
+                  other_angle_c * (self.angles[-1] + da/2)]
+        kwargs.setdefault('extent', extent)
         kwargs.setdefault('cmap', 'inferno')
-        ax.imshow(fmap, origin='lower',
-                  extent=extent, **kwargs)
         ax.set_xlabel('Lens angle / deg')
         ax.set_ylabel('Deflection angle / deg')
+        return ax.imshow(fmap, origin='lower', **kwargs)
 
     def plot_k(self, ax, fl, width=10, lens_angle_c=1., other_angle_c=1., new_origin=None, **kwargs):
         X = self.spectra[len(self.spectra) // 2].lens_scale * lens_angle_c
@@ -265,6 +364,51 @@ class Fermimap(object):
 
         kwargs.setdefault('cmap', 'gist_yarg')
         kwargs.setdefault('shading', 'gouraud')
+        kwargs.setdefault('rasterized', True)
         ax.pcolormesh(X2, Y2, fmap, **kwargs)
         ax.set_xlabel(r'$k_\parallel^\mathrm{Lens}$ / $1/\mathrm{\AA}$')
         ax.set_ylabel(r'$k_\parallel^\mathrm{Deflection}$ / $1/\mathrm{\AA}$')
+
+class DeflectionMap(AngleMap):
+    _param_name = 'angles'
+    _param_label = 'Deflection angle / deg'
+
+class EnergyMap(SpectrumMap):
+    _param_name = 'energies'
+    _param_label = 'Photon Energy / deg'
+
+    @property
+    def fls(self):
+        return [fl_guess(np.arange(len(s.energy_scale)), s.edc) for s in self.spectra]
+
+    def fls_fit(self, fls=None, order=2):
+        fls = fls or self.fls
+        p = np.poly1d(np.polyfit(self.energies, fls, order))
+        return np.around(p(self.energies)).astype(int)
+
+    @classmethod
+    def get_coord_transformer(cls, V_0=0, photon_angle=30, WF=4., BE=0., ):
+        def transform(phi, hv):
+            # dx.doi.org/10.1107/S1600577513019085
+            kz = np.sqrt((hv-WF-BE)*np.cos(np.radians(phi))**2+V_0)*0.5124 + np.sin(np.radians(photon_angle))*hv*5.067*10**-4
+            kx = np.sqrt(hv-WF-BE)*0.5124*np.sin(np.radians(phi)) #+ np.cos(np.radians(30))*Y*5.068*10**-4
+            return kx, kz
+        return transform
+
+    def plot_k(self, ax, fmap=None, lens_angle_c=1., angle_zero=0, tf_kwargs={}, **kwargs):
+        phi = lens_angle_c * (self.spectra[0].lens_scale - angle_zero)
+        hv = self.energies
+        iso_cut = fmap
+
+        phi, hv = np.meshgrid(phi, hv)
+
+        tf = self.get_coord_transformer(**tf_kwargs)
+        kx, kz = tf(phi, hv)
+        kwargs.setdefault('cmap', 'inferno')
+        kwargs.setdefault('shading', 'gouraud')
+        kwargs.setdefault('rasterized', True)
+        pc = ax.pcolormesh(kx, kz, iso_cut, **kwargs)
+        ax.set_ylabel(r'$k_\perp$ / $\mathrm{\AA}^{-1}$')
+        ax.set_xlabel(r'$k_\parallel$ / $\mathrm{\AA}^{-1}$')
+        ax.set_aspect('equal')
+        return pc

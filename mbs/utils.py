@@ -115,8 +115,7 @@ def daemon(path, out_dir):
     import logging
     
     from watchdog.observers import Observer
-    from watchdog.events import (LoggingEventHandler
-, FileCreatedEvent, 
+    from watchdog.events import (LoggingEventHandler, FileCreatedEvent, 
                                  FileModifiedEvent, FileMovedEvent)
     
     class PreviewEventHandler(LoggingEventHandler):

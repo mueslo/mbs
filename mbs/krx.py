@@ -39,9 +39,7 @@ class KRXFile(object):
         hdr1 = hdr1.reshape(-1, 3)
         self.page_start = hdr1[:, 0]
         self.page_shape = hdr1[:, 1:]
-            
-            
-    
+
     @property
     def num_pages(self):
         return np.prod(self.map_size)
@@ -51,7 +49,7 @@ class KRXFile(object):
         return np.memmap(self.fname, mode='r', 
                          dtype=np.int32, offset=self.page_start[n]*i32_nbytes, 
                          shape=tuple(self.page_shape[n, ::-1]), order='F')
-    
+
     def page_metadata(self, n=0):
         assert 0 <= n < self.num_pages
         page_size = self.page_start[n] + np.prod(self.page_shape[n])
@@ -59,3 +57,8 @@ class KRXFile(object):
             f.seek(page_size*i32_nbytes)
             hdr_len = np.fromfile(f, dtype=np.int32, count=1)[0]
             return f.read(hdr_len).decode('utf8')
+    
+    def export_page_txt(self, out_fname, n=0):
+        with open(out_fname, 'w', newline='') as f:
+                f.write(self.page_metadata(n))
+                np.savetxt(f, self.page(n), delimiter='\t', fmt="%d")

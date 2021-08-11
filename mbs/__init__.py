@@ -1,1 +1,1 @@
-from .spectra import Spectrum, Fermimap
+from .spectra import Spectrum, AngleMap
