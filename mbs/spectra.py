@@ -19,12 +19,13 @@ AcqMode = Enum('AcquisitionMode', 'Fixed Swept Dither')
 class Spectrum(object):
     def __init__(self, data, metadata):
         self._data = data
-        self._view = (slice(None),) * data.ndim
+        self._view = []  # iterative slices of original array
         self._metadata = metadata
         self._path = None
 
         if self.acq_mode == AcqMode.Dither:
-            self._view = slice(0, -self['DithSteps']), self._view[1]
+            self._view.append(
+                (slice(0, -self['DithSteps']),) + (slice(None),) * (data.ndim - 1))
 
     @classmethod
     def from_filename(cls, fname, zip_fname=None):
@@ -36,7 +37,7 @@ class Spectrum(object):
     def from_krx(cls, fname, page=0):
         kf = KRXFile(fname)
         metadata = parse_lines(
-            kf.page_metadata(page).splitlines(), 
+            kf.page_metadata(page).splitlines(),
             metadata_only=True)
         spec = cls(data=kf.page(page), metadata=metadata)
         spec._path = fname, None
@@ -49,7 +50,9 @@ class Spectrum(object):
     def _apply_view(self, x, view_axis=None):
         if view_axis is None:
             view_axis = slice(None)
-        return x[self._view[view_axis]]
+        for v in self._view:
+            x = x[v[view_axis]]
+        return x
 
     @property
     def data(self):
@@ -74,11 +77,11 @@ class Spectrum(object):
     @property
     def _xscale(self):
         try:
-            return scale(self['XScaleMin'], self['XScaleMax'], 
-                self['XScaleMult'], self['XScaleName'])
+            return scale(self['XScaleMin'], self['XScaleMax'],
+                         self['XScaleMult'], self['XScaleName'])
         except KeyError:
-            return scale(self['ScaleMin'], self['ScaleMax'], 
-                self['ScaleMult'], self['ScaleName'])
+            return scale(self['ScaleMin'], self['ScaleMax'],
+                         self['ScaleMult'], self['ScaleName'])
 
     @property
     def _lens_scale(self):
@@ -104,8 +107,8 @@ class Spectrum(object):
         # todo: afaict, MBS write the lower boundary of energy bins
         #       currently we do not correct for this, but this will lead to
         #       energy shifts proportional to 0.5 * step size
-        return scale(self["Start K.E."], self["End K.E."] - self['Step Size'], 
-            self['Step Size'], 'Energy')
+        return scale(self["Start K.E."], self["End K.E."] - self['Step Size'],
+                     self['Step Size'], 'Energy')
 
     @property
     def _energy_scale(self):
@@ -133,8 +136,8 @@ class Spectrum(object):
     def _translate_slice(self, slicetuple):
         slice_energy, slice_lens = slicetuple
         # todo: slice(None)
-        return (slice(*(self.e_to_i(e, view=False) for e in [slice_energy.start, slice_energy.stop])),
-                slice(*(self.l_to_i(l, view=False) for l in [slice_lens.start, slice_lens.stop])))
+        return (slice(*list(map(self.e_to_i, [slice_energy.start, slice_energy.stop]))),
+                slice(*list(map(self.l_to_i, [slice_lens.start, slice_lens.stop]))))
 
     def get_metadata(self, key):
         return self._metadata[key]
@@ -144,7 +147,8 @@ class Spectrum(object):
             key = (key, slice(None))
         if isinstance(key, tuple):
             spec = shallow_copy(self)
-            spec._view = self._translate_slice(key)
+            spec._view = self._view.copy()  # non-shallow copy
+            spec._view.append(self._translate_slice(key))
             return spec
 
         elif isinstance(key, str):
@@ -153,7 +157,7 @@ class Spectrum(object):
     def __add__(self, other):
         if isinstance(other, int) and other == 0:
             return self
-        
+
         # assert angle/energy extent is the same
         assert (self.lens_scale == other.lens_scale).all()
         assert (self.energy_scale == other.energy_scale).all()
@@ -313,8 +317,8 @@ class SpectrumMap(object):  # 1D parameter space for now
         s = spectra[0]
         if 'MapCoordinate' in s._metadata:
             assert kf.num_pages == s['MapNoXSteps']
-            kwargs.setdefault(cls._param_name, 
-                np.linspace(s['MapStartX'], s['MapEndX'], s['MapNoXSteps'])) 
+            kwargs.setdefault(cls._param_name,
+                              np.linspace(s['MapStartX'], s['MapEndX'], s['MapNoXSteps']))
         return cls(spectra=spectra, **kwargs)
 
     def __getattr__(self, attr):
@@ -375,7 +379,12 @@ class AngleMap(SpectrumMap):
         e_fl = self.spectra[len(self.spectra) // 2].energy_scale[fl]
         X2 = np.sqrt(e_fl - 4) * 0.512 * np.sin(np.radians(X))  # + np.cos(np.radians(30))*Y*5.068*10**-4
         Y2 = np.sqrt(e_fl - 4) * 0.512 * np.sin(np.radians(Y))  # + np.cos(np.radians(30))*Y*5.068*10**-4
-        fmap = self.generate_fermimap(fl, width)
+
+        try:
+            fmap = kwargs.pop('fmap')
+        except KeyError:
+            fmap = self.generate_fermimap(
+                fl, width, kwargs.pop('dither_repair', False))
 
         if new_origin:
             X2 = X2 - new_origin[0]
