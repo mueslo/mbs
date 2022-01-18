@@ -46,9 +46,14 @@ class Spectrum(object):
     def acq_mode(self):
         return AcqMode[self['AcqMode']]
 
+    def _apply_view(self, x, view_axis=None):
+        if view_axis is None:
+            view_axis = slice(None)
+        return x[self._view[view_axis]]
+
     @property
     def data(self):
-        return self._data[self._view]
+        return self._apply_view(self._data)
 
     @property
     def masked_data(self):
@@ -76,36 +81,50 @@ class Spectrum(object):
                 self['ScaleMult'], self['ScaleName'])
 
     @property
+    def _lens_scale(self):
+        return np.linspace(self._xscale.min, self._xscale.max, self['NoS'])
+
+    @property
     def lens_scale(self):
-        return np.linspace(self._xscale.min, self._xscale.max, self['NoS'])[self._view[1]]
+        return self._apply_view(self._lens_scale, view_axis=1)
 
     @property
     def lens_extent(self):
         return tuple(self.lens_scale[[0, -1]])
 
-    def l_to_i(self, l):
+    def l_to_i(self, l, view=True):
+        """Return array index for given lens coordinate l"""
         if l is None:
             return None
-        return (np.abs(self.lens_scale - l)).argmin()
+        lens_scale = self.lens_scale if view else self._lens_scale
+        return (np.abs(lens_scale - l)).argmin()
 
     @property
     def _escale(self):
+        # todo: afaict, MBS write the lower boundary of energy bins
+        #       currently we do not correct for this, but this will lead to
+        #       energy shifts proportional to 0.5 * step size
         return scale(self["Start K.E."], self["End K.E."] - self['Step Size'], 
             self['Step Size'], 'Energy')
 
     @property
+    def _energy_scale(self):
+        return np.linspace(self._escale.min, self._escale.max, len(self._data))
+
+    @property
     def energy_scale(self):
-        return np.linspace(self._escale.min, self._escale.max, len(self._data))[self._view[0]]
-        #return np.arange(self['Start K.E.'], self['End K.E.'], self['Step Size'])
+        return self._apply_view(self._energy_scale, view_axis=0)
 
     @property
     def energy_extent(self):
         return tuple(self.energy_scale[[0, -1]])
 
-    def e_to_i(self, e):
+    def e_to_i(self, e, view=True):
+        """Return array index i for given energy e"""
         if e is None:
             return None
-        return (np.abs(self.energy_scale - e)).argmin()
+        energy_scale = self.energy_scale if view else self._energy_scale
+        return (np.abs(energy_scale - e)).argmin()
 
     @property
     def name(self):
@@ -114,8 +133,8 @@ class Spectrum(object):
     def _translate_slice(self, slicetuple):
         slice_energy, slice_lens = slicetuple
         # todo: slice(None)
-        return (slice(*list(map(self.e_to_i, [slice_energy.start, slice_energy.stop]))),
-                slice(*list(map(self.l_to_i, [slice_lens.start, slice_lens.stop]))))
+        return (slice(*(self.e_to_i(e, view=False) for e in [slice_energy.start, slice_energy.stop])),
+                slice(*(self.l_to_i(l, view=False) for l in [slice_lens.start, slice_lens.stop])))
 
     def get_metadata(self, key):
         return self._metadata[key]
