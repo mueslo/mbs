@@ -5,7 +5,7 @@ from collections import namedtuple
 from enum import Enum
 from copy import copy as shallow_copy
 
-from .load import parse_data, parse_lines, parse_info
+from .io import parse_data, parse_lines, parse_info, frame_unit
 from .krx import KRXFile
 from .utils import fl_guess
 

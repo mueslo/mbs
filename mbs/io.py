@@ -14,6 +14,7 @@ frame_unit = datetime.timedelta(seconds=0.001)
 fname_re = re.compile(r'.*(?P<number>\d{5})_(?P<region>\d{5}).txt')
 info_re = re.compile(r"^([^:]+):\s*([^(]+)\s*(\(([^)]+)\))?")
 
+
 def is_mbs_filename(path):     
      fname = os.path.basename(path)
      if fname_re.fullmatch(fname):
@@ -29,24 +30,9 @@ def mbs_boolean(s):
     raise ValueError
 
 
-def stats(metadata):
-    s = {}
-    if metadata['AcqMode'] == 'Fixed':
-        s['acqtime'] = metadata['ActScans'] * metadata['Frames Per Step'] * frame_unit
-        s['eff_acqtime'] = s['acqtime']
-    elif metadata['AcqMode'] == 'Swept':
-        s['acqtime'] = metadata['ActScans'] * metadata['TotSteps'] * metadata['Frames Per Step'] * frame_unit
-        s['eff_acqtime'] =  metadata['ActScans'] * metadata['No. Steps'] * metadata['Frames Per Step'] * frame_unit
-    elif metadata['AcqMode'] == 'Dither':
-        s['acqtime'] = metadata['ActScans'] * metadata['TotSteps'] * metadata['Frames Per Step'] * frame_unit
-        s['eff_acqtime'] = metadata['ActScans'] * metadata['TotSteps'] * (metadata['No. Steps'] - metadata['TotSteps'])/metadata['No. Steps'] * metadata['Frames Per Step'] * frame_unit
-        
-    s['duration'] = metadata['TIMESTAMP:'] - metadata['STim']
-    return s
-
-
 @contextmanager
 def load(fname, zip_fname=None):
+    """Decorator that will open regular files and files contained within zip folders (archived measurements)"""
     if zip_fname is None:
         with open(fname, 'r') as f:
             yield f
@@ -59,6 +45,8 @@ def load(fname, zip_fname=None):
 
 # from https://stackoverflow.com/a/2437645/
 class LimitedSizeDict(OrderedDict):
+    """Measurement cache"""
+    # todo: separate caches and sizes for metadata and data
     def __init__(self, *args, **kwds):
         self.size_limit = kwds.pop("size_limit", None)
         OrderedDict.__init__(self, *args, **kwds)
@@ -71,7 +59,8 @@ class LimitedSizeDict(OrderedDict):
     def _check_size_limit(self):
         if self.size_limit is not None:
             while len(self) > self.size_limit:
-                self.popitem(last=False)
+                key = self.popitem(last=False)[0]
+                print(f'INFO: Retiring spectrum <{key}> from IO cache')
 
 
 def parse_lines(lines, metadata_only=False):
@@ -88,7 +77,8 @@ def parse_lines(lines, metadata_only=False):
             else:
                 name, val = line.split('\t', 1)
                 val = val.strip()
-
+                if not name and not val:
+                    continue
                 for T in (int, float, mbs_timestamp, mbs_boolean):
                     try:
                         val = T(val)
@@ -109,6 +99,8 @@ def parse_lines(lines, metadata_only=False):
 
 
 io_cache = LimitedSizeDict(size_limit=128)
+
+
 def parse_data(fname, metadata_only=False, zip_fname=None):
     try:
         key = (fname, metadata_only, zip_fname)
@@ -148,10 +140,11 @@ def parse_info(fname, zip_fname=None):
 
 
 class MBSFilePathGenerator(object):
-    def __init__(self, prefix, directory=None):
+    def __init__(self, prefix, directory=None, zip_fname=None):
         self.prefix = prefix
         self.directory = directory or ""
-    
+        self.zip_fname = zip_fname
+
     def __call__(self, number, region=None):
         if isinstance(number, Iterable):
             return [self(n, region) for n in number]

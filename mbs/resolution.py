@@ -7,7 +7,7 @@ from scipy.ndimage import gaussian_filter1d
 from scipy.linalg import svd
 import matplotlib.pyplot as plt
 
-from .load import parse_data
+from .io import parse_data
 from .utils import fl_guess
 
 
