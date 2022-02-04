@@ -1,13 +1,14 @@
 import operator
 from functools import reduce
 from os.path import splitext
-from collections import namedtuple
+from collections import namedtuple, OrderedDict
 from enum import Enum
 from copy import copy as shallow_copy
 
 from .io import parse_data, parse_lines, parse_info, frame_unit
 from .krx import KRXFile
 from .utils import fl_guess
+from . import corrections as correct
 
 import numpy as np
 from scipy.ndimage import gaussian_filter
@@ -28,7 +29,15 @@ class Spectrum(object):
                 (slice(0, -self['DithSteps']),) + (slice(None),) * (data.ndim - 1))
 
     @classmethod
-    def from_filename(cls, fname, zip_fname=None):
+    def from_filename(cls, fname, zip_fname=None, **kwargs):
+        if fname.endswith('.txt'):
+            return cls.from_txt(fname, zip_fname, **kwargs)
+        elif fname.endswith('.krx'):
+            return cls.from_krx(fname, zip_fname, **kwargs)
+        raise ValueError('Please use explicit format loaders if filename suffix was changed')
+
+    @classmethod
+    def from_txt(cls, fname, zip_fname=None):
         spec = cls(*parse_data(fname, zip_fname=zip_fname))
         spec._path = fname, zip_fname
         return spec
@@ -42,6 +51,22 @@ class Spectrum(object):
         spec = cls(data=kf.page(page), metadata=metadata)
         spec._path = fname, None
         return spec
+
+    #@classmethod
+    #def from_upload_widget(cls):
+    #    widgets.FileUpload(  # this is upload, not file chooser
+    #        accept='.krx,.txt',
+    #        multiple=True  # multiple will be added
+    #    )
+
+    @property
+    def xarray(self):
+        from xarray import DataArray
+        l = 'x' if not self['Lens Mode'].startswith('L4Ang') else 'phi'
+        da = DataArray(self.data, dims=('e', l),
+                       coords={'e': self.energy_scale, l: self.lens_scale},
+                       attrs=self._metadata)
+        return da
 
     @property
     def acq_mode(self):
@@ -57,6 +82,9 @@ class Spectrum(object):
     @property
     def data(self):
         return self._apply_view(self._data)
+
+    def __array__(self):
+        return self.data
 
     @property
     def masked_data(self):
@@ -133,6 +161,10 @@ class Spectrum(object):
     def name(self):
         return self['Gen. Name']
 
+    def _ipython_display_(self):
+        from .widgets import specwidget
+        return specwidget(self)
+
     def _translate_slice(self, slicetuple):
         slice_energy, slice_lens = slicetuple
         # todo: slice(None)
@@ -141,6 +173,56 @@ class Spectrum(object):
 
     def get_metadata(self, key):
         return self._metadata[key]
+
+    @property
+    def duration(self):
+        """Wall-time clock duration of measurement, completely wrong for multi-region scans"""
+        return self['TIMESTAMP:'] - self['STim']
+
+    @property
+    def acqtime(self):
+        """Nominal and effective (signal) acquisition time based on measurement parameters"""
+
+        if self['AcqMode'] == 'Fixed':
+            acqtime = self['ActScans'] * self['Frames Per Step'] * frame_unit
+            eff_acqtime = acqtime
+        elif self['AcqMode'] == 'Swept':
+            acqtime = self['ActScans'] * self['TotSteps'] * self['Frames Per Step'] * frame_unit
+            eff_acqtime = self['ActScans'] * self['No. Steps'] * self['Frames Per Step'] * frame_unit
+        elif self['AcqMode'] == 'Dither':
+            acqtime = self['ActScans'] * self['TotSteps'] * self['Frames Per Step'] * frame_unit
+            eff_acqtime = acqtime * (self['No. Steps'] - self['TotSteps']) / self['No. Steps']
+
+        return acqtime, eff_acqtime
+
+    def index_slice(self, slicetuple):
+        """Slice in terms of indices"""
+        spec = shallow_copy(self)
+        spec._view = self._view.copy()  # non-shallow copy
+        spec._view.append(slicetuple)
+
+    def _symmetrize(self, i, method='cut'):
+        """Symmetrize spectrum with respect to some lens array index (of current view)"""
+
+        # pad/cut x such that i is in the middle
+        if method == 'cut':
+            size = min(self.data.shape[1]-1 - i, i)
+            sl = slice(None), slice(i-size, i+size+1)
+            spec = shallow_copy(self)
+            spec._view = self._view.copy()  # non-shallow copy
+            spec._data = np.empty(self._data.shape)
+            spec._data.fill(np.nan)
+            valid_data = self.data[sl]
+            spec._view.append(sl)
+            spec_data = spec._apply_view(spec._data)
+            spec_data[:] = valid_data + valid_data[:, ::-1]
+            return spec
+        raise Exception('not implemented')
+
+    def symmetrize(self, lens_coordinate, method='cut'):
+        """Symmetrize spectrum with respect to some lens coordinate"""
+        i = self.l_to_i(lens_coordinate)
+        return self._symmetrize(i, method)
 
     def __getitem__(self, key):
         if isinstance(key, slice):
@@ -180,6 +262,15 @@ class Spectrum(object):
     def __radd__(self, other):
         return self.__add__(other)
 
+    def dead_pixel_correction(self):
+        if self.acq_mode is AcqMode.Swept and self.get_metadata('PCntON?') == 1:
+            data = correct.dp_pcnt_swept(self._data)
+            spec = shallow_copy(self)
+            spec._data = data
+            return spec
+        else:
+            raise Exception('not implemented')
+
     def plot(self, ax, angle_correction=1., **kwargs):
         extent = self.lens_extent + self.energy_extent
         kwargs.setdefault('cmap', 'gist_yarg')
@@ -195,7 +286,11 @@ class Spectrum(object):
 
     @property
     def edc(self):
+        # todo: EDC object with _ipython_display_
         return np.sum(self.data, axis=1)
+
+    # todo edc/mdc setter for normalization?
+    # todo2 instead maybe EDC spectrum object/ndarray wrapper
 
     def plot_edc(self, ax, e_f=None, norm=None, **kwargs):
         show_counts = kwargs.pop('show_counts', False)
@@ -285,19 +380,43 @@ class SpectrumSum(Spectrum):
                    for fname in fnames]
         return cls.from_spectra(*spectra)
 
-    def get_metadata(self, item):
-        vals = [m[item] for m in self._metadata]
-        if not vals or vals.count(vals[0]) == len(vals):
+    @property
+    def md_keys(self):
+        md_keys = self._metadata[0].keys()
+        assert all(md.keys() == md_keys for md in self._metadata)
+        return md_keys
+
+    @property
+    def metadata(self):
+        return self.get_metadata(combine=True)
+
+    # todo: extensive/intensive metadata
+    # sum actscans if all other exposure settings are equal
+    # (AddFMS
+
+    def get_metadata(self, item=None, combine=True):
+        if not item:
+            return OrderedDict((k, self.get_metadata(k, combine))
+                               for k in self.md_keys)
+
+        vals = np.array([m[item] for m in self._metadata])
+        no_combine = set(['ActScans', 'Gen. Name', 'STim', 'TIMESTAMP:'])
+        combine = combine and item not in no_combine
+        #if combine and (not vals or vals.count(vals[0]) == len(vals)):
+        if combine and (vals[0] == vals).all():
             return vals[0]
-        else:
-            return vals
+
+        ignore = set(['No Scans'])
+        if not item in ignore | no_combine:
+            print(f'Warning: metadata values {item} differ for SpectrumSum summands')
+        return vals
 
     @property
     def name(self):
         return 'Sum of ' + ', '.join(self['Gen. Name'])
 
 
-class SpectrumMap(object):  # 1D parameter space for now
+class SpectrumMap(object):  # 1D parameter space only (for now)
     _param_name = 'params'
     def __init__(self, spectra, **kwargs):
         params = kwargs.get(self._param_name, range(len(spectra)))
@@ -327,8 +446,15 @@ class SpectrumMap(object):  # 1D parameter space for now
         raise AttributeError
 
     @property
-    def array(self):
+    def data(self):
         return np.stack([s.data for s in self.spectra])
+
+    def __array__(self):
+        return self.data
+
+    def _ipython_display_(self):
+        from .widgets import isowidget
+        return isowidget(self)
 
     def generate_fermimap(self, fl, width, dither_repair=False):
         fmap = []
