@@ -80,28 +80,41 @@ def specwidget(spec, ax=None, fig=None, **plot_kwargs):
     #                   for k, v in spec.metadata.items()])
     #metadata = widgets.HTML(f"<table>{md_rows}</table>")
 
-    md_elements = [widgets.HTML(f"<b>{k}</b>: {v}") for k, v in spec.metadata.items()]
-    metadata = widgets.GridBox(md_elements,
-                               layout=widgets.Layout(grid_template_columns="repeat(3, auto)"))
     #metadata = widgets.VBox(md_elements, layout=widgets.Layout(flex_flow='row wrap'))
 
-    acc = widgets.Accordion(children=[metadata, widgets.Label('count rate, _view etc.')],
-                            selected_index=None)
-    acc.set_title(0, 'Metadata'); acc.set_title(1, 'Generated statistics')
-    full_widget = widgets.VBox([widgets.HTML(f'<h4>{spec.name}</h4>'), tabs, acc, cb_output])
+    vbox_list = [widgets.HTML(f'<h4>{spec.name}</h4>'), tabs]
+
+    extra_info = getattr(spec, '_extra_info_widgets')
+    if extra_info is not None:
+        extra_widgets, extra_titles = zip(*extra_info)
+        #acc = widgets.Accordion(children=[metadata, widgets.Label('count rate, _view etc.')],
+        #                        selected_index=None)
+        acc = widgets.Accordion(children=extra_widgets, selected_index=None)
+        for i, t in enumerate(extra_titles):
+            acc.set_title(i, t)
+        vbox_list.append(acc)
+
+    vbox_list.append(cb_output)
+    full_widget = widgets.VBox(vbox_list)
 
     #accordion = widgets.Accordion(children=[widgets.IntSlider(), widgets.Text()], titles=('Slider', 'Text'))
     display(full_widget)
 
 def isowidget(specmap, ax=None, fl_default=None, width_default=None, dr_default=True, continuous_update=False, pmin=5, pmax=99.8, **plot_kwargs):
-    #assert plt.get_backend() == 'module://ipympl.backend_nbagg'
+    be = backend()
     output = widgets.Output()
-    with output:
-        if not ax:
+
+    if not ax:
+        with plt.ioff():
             fig, ax = plt.subplots(dpi=90, constrained_layout=True)
-            #fig.canvas.resizable = True
-            fig.canvas.toolbar_position = 'bottom'
-            fig.canvas.header_visible = False
+        with output:
+            if be == backends.ipympl:
+                #fig.canvas.resizable = True
+                fig.canvas.toolbar_position = 'bottom'
+                fig.canvas.header_visible = False
+                display(fig.canvas)
+            elif be == backends.inline:
+                flush_figures()
 
     s = specmap.spectra[0]
     plot_kwargs.setdefault('dither_repair', dr_default)
@@ -134,7 +147,12 @@ def isowidget(specmap, ax=None, fl_default=None, width_default=None, dr_default=
         pmin, pmax = clim_p
         fp.set_clim(np.percentile(fmap, pmin), np.percentile(fmap, pmax))
         title.set_text(f"E={s.energy_scale[fl]:.2f}±{width*s['Step Size']:.2f}eV\n{s.duration}")
-        flush_figures()
+        #flush_figures()
+
+        if be is backends.inline:
+            output.clear_output(wait=True)
+            with output:
+                display(fig)
 
     #rangecontrol = IntRangeSlider(
     #    value=[fl_default-width_default, fl_default+width_default],
@@ -158,7 +176,13 @@ def isowidget(specmap, ax=None, fl_default=None, width_default=None, dr_default=
     #flcontrol.observe(on_value_change, names='value')
     #widthcontrol.observe(on_value_change, names='value')
     #rangecontrol.observe(on_value_change2, names='value')
-    interactive_output(update_fermimap, {'fl': flcontrol, 'width': widthcontrol, 'dr': drcontrol, 'clim_p': climcontrol})
+    cb_output = interactive_output(update_fermimap, {'fl': flcontrol, 'width': widthcontrol, 'dr': drcontrol, 'clim_p': climcontrol})
 
-    return widgets.VBox([controls, output])
+    vbox_list = [controls, output]
+    vbox_list.append(cb_output)
+    full_widget = widgets.VBox(vbox_list)
+
+    #display(full_widget)
+
+    return full_widget
 

@@ -4,6 +4,7 @@ from os.path import splitext
 from collections import namedtuple, OrderedDict
 from enum import Enum
 from copy import copy as shallow_copy
+from numbers import Number
 
 from .io import parse_data, parse_lines, parse_info, frame_unit
 from .krx import KRXFile
@@ -11,13 +12,49 @@ from .utils import fl_guess
 from . import corrections as correct
 
 import numpy as np
+from numpy.lib.mixins import NDArrayOperatorsMixin
 from scipy.ndimage import gaussian_filter
-
 
 scale = namedtuple('Scale', ['min', 'max', 'step', 'name'])
 AcqMode = Enum('AcquisitionMode', 'Fixed Swept Dither')
 
-class Spectrum(object):
+class AbstractSpectrum(NDArrayOperatorsMixin):
+    def __init__(self, data, axes, metadata=None):
+        """
+        axes = Tuple[axis]
+        axis = name, range (, label)
+        metadata = Dict[String] -> Object"""
+        self.data = data
+        self.axes = axes  # first axis should be energy
+        self.metadata = metadata or {}
+        self.compat_keys = set()  # keys that must be the same to perform arithmetic
+
+
+    def __array__(self):
+        return self.data
+
+    def __array_ufunc__(self, ufunc, method, *args, **kwargs):
+        #print(method, ufunc, args, kwargs)
+        inputs = []
+        for arg in args:
+            # In this case we accept only scalar numbers or DiagonalArrays.
+            if isinstance(arg, Number):
+                inputs.append(arg)
+            elif isinstance(arg, np.ndarray):
+                assert arg.shape[-1] == len(self.y)
+                inputs.append(arg)
+            elif isinstance(arg, self.__class__):
+                assert np.allclose(self.lens_scale, arg.lens_scale)
+                assert np.allclose(self.energy_scale, arg.energy_scale)
+                inputs.append(arg.data)
+            else:
+                return NotImplemented
+        if method == '__call__':
+            return self.__class__(x, ufunc(*inputs, **kwargs))
+        else:
+            return NotImplemented
+
+class Spectrum(AbstractSpectrum):
     def __init__(self, data, metadata):
         self._data = data
         self._view = []  # iterative slices of original array
@@ -82,9 +119,6 @@ class Spectrum(object):
     @property
     def data(self):
         return self._apply_view(self._data)
-
-    def __array__(self):
-        return self.data
 
     @property
     def masked_data(self):
@@ -165,14 +199,39 @@ class Spectrum(object):
         from .widgets import specwidget
         return specwidget(self)
 
+    @property
+    def _extra_info_widgets(self):
+        import ipywidgets as widgets
+        widgets_l = []
+
+        md_elements = [widgets.HTML(f"<b>{k}</b>: {v}") for k, v in self.metadata.items()]
+        metadata = widgets.GridBox(md_elements,
+            layout=widgets.Layout(grid_template_columns="repeat(3, auto)"))
+        widgets_l.append((metadata, 'Metadata'))
+
+        if self.info is not None:
+            info_elements = [widgets.HTML(f"<b>{k}</b>: {v}{u if u is not None else ''}")
+                             for k, (v, u) in self.info.items()]
+            info = widgets.GridBox(info_elements,
+                layout=widgets.Layout(grid_template_columns="repeat(3, auto)"))
+            widgets_l.append((info, 'Endstation parameters'))
+
+        return widgets_l
+
     def _translate_slice(self, slicetuple):
         slice_energy, slice_lens = slicetuple
         # todo: slice(None)
         return (slice(*list(map(self.e_to_i, [slice_energy.start, slice_energy.stop]))),
                 slice(*list(map(self.l_to_i, [slice_lens.start, slice_lens.stop]))))
 
-    def get_metadata(self, key):
-        return self._metadata[key]
+    @property
+    def metadata(self):
+        return self.get_metadata()
+
+    def get_metadata(self, item=None):
+        if item is None:
+            return self._metadata
+        return self._metadata[item]
 
     @property
     def duration(self):
@@ -237,13 +296,18 @@ class Spectrum(object):
             return self.get_metadata(key)
 
     def __add__(self, other):
-        if isinstance(other, int) and other == 0:
-            return self
+        #print('add', other)
+        if isinstance(other, Number):
+            if other == 0:
+                return self
+            else:
+                return type(self)(self._data + other, self._metadata)
 
         # assert angle/energy extent is the same
-        assert (self.lens_scale == other.lens_scale).all()
-        assert (self.energy_scale == other.energy_scale).all()
-        assert self['Lens Mode'] == other['Lens Mode']
+        if isinstance(other, Spectrum):
+            assert np.allclose(self.lens_scale, other.lens_scale)
+            assert np.allclose(self.energy_scale, other.energy_scale)
+            assert self['Lens Mode'] == other['Lens Mode']
 
         if not isinstance(self, SpectrumSum):
             m = [self._metadata]
@@ -256,7 +320,6 @@ class Spectrum(object):
             om = [other._metadata]
         else:
             return NotImplemented
-
         return SpectrumSum(self._data + other._data, m + om)
 
     def __radd__(self, other):
@@ -265,6 +328,11 @@ class Spectrum(object):
     def dead_pixel_correction(self):
         if self.acq_mode is AcqMode.Swept and self.get_metadata('PCntON?') == 1:
             data = correct.dp_pcnt_swept(self._data)
+            spec = shallow_copy(self)
+            spec._data = data
+            return spec
+        elif self.acq_mode is AcqMode.Dither and self.get_metadata('PCntON?') == 1:
+            data = correct.dp_pcnt_dither(self._data, self.get_metadata('DithSteps'))
             spec = shallow_copy(self)
             spec._data = data
             return spec
@@ -288,6 +356,7 @@ class Spectrum(object):
     def edc(self):
         # todo: EDC object with _ipython_display_
         return np.sum(self.data, axis=1)
+        # todo: return self.sum(dim=self.lens_axis_name, keep_attrs=True)
 
     # todo edc/mdc setter for normalization?
     # todo2 instead maybe EDC spectrum object/ndarray wrapper
@@ -304,7 +373,9 @@ class Spectrum(object):
             x_scale = self.energy_scale
             xlabel = r'$E_\mathrm{kin}$ / eV'
         y_data = np.sum(self.data, axis=1)
-        if norm == 'max':
+        if norm is None:
+            pass
+        elif norm == 'max':
             y_data = y_data / y_data.max()
         elif norm == 'maxmin':
             y_data = (y_data - y_data.min()) / (y_data.max() - y_data.min())
