@@ -38,6 +38,10 @@ def load(fname, zip_fname=None):
             yield f
     else:
         with zipfile.ZipFile(zip_fname) as zip_f:
+            try:
+                fname = zip_f.getinfo(fname)
+            except KeyError:
+                raise IOError(f'{zip_fname} does not contain {fname}')
             with zip_f.open(fname, 'r') as f:
                 with io.TextIOWrapper(f) as f:
                     yield f

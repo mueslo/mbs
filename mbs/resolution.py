@@ -36,17 +36,15 @@ def cut(x, y, window):
     return x[idx_start:idx_end], y[idx_start:idx_end]
 
 
-def fermi_fit(data, metadata, T, de=1., ax=None, fl=None):
-    edc = data.sum(axis=1)
-    e_ax = np.linspace(metadata['Start K.E.'], metadata['End K.E.'] - metadata['Step Size'], len(edc))
-    fl = fl or fl_guess(e_ax, edc)
+def fermi_fit(spec, T, de=1., ax=None, fl=None):
+    fl = fl or fl_guess(spec.energy_scale, spec.edc)
     window = (fl - de / 2, fl + de / 2)
-    cut_e_ax, cut_edc = cut(e_ax, edc, window)
+    cut_e_ax, cut_edc = cut(spec.energy_scale, spec.edc, window)
 
-    func = make_fe(T, metadata['Step Size'])
+    func = make_fe(T, spec.get_metadata('Step Size'))
 
     param_names = ["a", "b", "C", "sigma", "E_f"]
-    initial_guess = (0, max(cut_edc), min(edc), 0.05, fl)
+    initial_guess = (0, max(cut_edc), min(spec.edc), 0.05, fl)
     bounds = [(0, -np.inf, 0, 0, window[0]),  # restrict a to be positive
               (np.inf, np.inf, np.inf, np.inf, window[1])]
     fit_params, cov = curve_fit(func, cut_e_ax, cut_edc,
