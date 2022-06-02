@@ -1,5 +1,6 @@
 from os.path import basename
 
+import math
 import numpy as np
 import pandas as pd
 from scipy.optimize import curve_fit, least_squares
@@ -26,7 +27,14 @@ def fermiedge(E, a, b, C, E_f, T):
 
 def make_fe(T, step_size):
     def broadened_fermiedge(E, a, b, C, sigma, E_f):
-        return gaussian_filter1d(fermiedge(E, a, b, C, E_f, T), sigma/step_size)
+        # extend E by 3 sigma (to avoid edge effects)
+        n_ext = math.ceil(3*sigma/step_size)
+        E_ext = np.pad(E, mode='linear_ramp', pad_width=n_ext, 
+            end_values=(E[0]-n_ext*step_size, E[-1]+n_ext*step_size))
+        return gaussian_filter1d(
+            fermiedge(E_ext, a, b, C, E_f, T), 
+            sigma/step_size, 
+            mode='nearest')[n_ext:-n_ext]
     return broadened_fermiedge
 
 
@@ -58,10 +66,11 @@ def fermi_fit(spec, T, de=1., ax=None, fl=None):
     fit_params_d['fwhm_err'] = 2.3548 * fit_params_d['sigma_err']
     
     if ax:
-        ax.plot(cut_e_ax, cut_edc, linewidth=0.5)
-        ax.plot(cut_e_ax, fit_params_d['a']*(cut_e_ax-fit_params_d['E_f']) + fit_params_d['b'], ls='--', color='k', alpha=0.3)
-        ax.axvline(fit_params_d['E_f'], lw=0.5, color='k', alpha=0.3)
-        ax.plot(cut_e_ax, func(cut_e_ax, *fit_params))
+        ax.plot(cut_e_ax, cut_edc, linewidth=0.5, label='spectrum')
+        ax.axhline(fit_params_d['C'], linewidth=0.5, ls=':', label='background')
+        ax.plot(cut_e_ax, fit_params_d['C']+fit_params_d['a']*(cut_e_ax-fit_params_d['E_f']) + fit_params_d['b'], ls='--', color='k', alpha=0.3, label='DOS')
+        ax.axvline(fit_params_d['E_f'], lw=0.5, color='k', alpha=0.3, label='$E_F$')
+        ax.plot(cut_e_ax, func(cut_e_ax, *fit_params), label='fit')
         ax.set_xlim(cut_e_ax[0], cut_e_ax[-1])
         # ax.plot(cut_e_ax, func(cut_e_ax, *initial_guess), color='k')
 
