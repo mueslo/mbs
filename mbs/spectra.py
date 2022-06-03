@@ -70,7 +70,7 @@ class Spectrum(AbstractSpectrum):
         if fname.endswith('.txt'):
             return cls.from_txt(fname, zip_fname, **kwargs)
         elif fname.endswith('.krx'):
-            return cls.from_krx(fname, zip_fname, **kwargs)
+            return cls.from_krx(fname, **kwargs)
         raise ValueError('Please use explicit format loaders if filename suffix was changed')
 
     @classmethod
