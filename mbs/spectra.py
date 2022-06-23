@@ -1,6 +1,6 @@
 import operator
 from functools import reduce
-from os.path import splitext
+from os.path import splitext, basename
 from collections import namedtuple, OrderedDict
 from enum import Enum
 from copy import copy as shallow_copy
@@ -50,6 +50,7 @@ class AbstractSpectrum(NDArrayOperatorsMixin):
             else:
                 return NotImplemented
         if method == '__call__':
+            x = args
             return self.__class__(x, ufunc(*inputs, **kwargs))
         else:
             return NotImplemented
@@ -65,6 +66,8 @@ class Spectrum(AbstractSpectrum):
             self._view.append(
                 (slice(0, -self['DithSteps']),) + (slice(None),) * (data.ndim - 1))
 
+# todo: __copy__, __deepcopy__
+
     @classmethod
     def from_filename(cls, fname, zip_fname=None, **kwargs):
         if fname.endswith('.txt'):
@@ -76,17 +79,21 @@ class Spectrum(AbstractSpectrum):
     @classmethod
     def from_txt(cls, fname, zip_fname=None):
         spec = cls(*parse_data(fname, zip_fname=zip_fname))
-        spec._path = fname, zip_fname
+        spec._path = fname, None, zip_fname
         return spec
 
     @classmethod
     def from_krx(cls, fname, page=0):
         kf = KRXFile(fname)
+        
+        if page is None:  # return all pages
+            return [cls.from_krx(fname, page=p) for p in range(kf.num_pages)]
+
         metadata = parse_lines(
             kf.page_metadata(page).splitlines(),
             metadata_only=True)
         spec = cls(data=kf.page(page), metadata=metadata)
-        spec._path = fname, None
+        spec._path = fname, page, None
         return spec
 
     #@classmethod
@@ -129,7 +136,7 @@ class Spectrum(AbstractSpectrum):
         if not self._path:
             return None
 
-        fname, zip_fname = self._path
+        fname, page, zip_fname = self._path
         info_path = splitext(fname)[0] + '.info'
         try:
             return parse_info(info_path, zip_fname)
@@ -197,7 +204,13 @@ class Spectrum(AbstractSpectrum):
 
     def _ipython_display_(self):
         from .widgets import specwidget
-        return specwidget(self)
+        display(specwidget(self))
+
+    def __repr__(self) -> str:
+        path, page, zip_fname = self._path
+        fname = basename(path)
+        pagestr = f"[{page}]" if page is not None else ""
+        return f"<Spectrum({fname}{pagestr})>"
 
     @property
     def _extra_info_widgets(self):
@@ -490,6 +503,7 @@ class SpectrumSum(Spectrum):
 class SpectrumMap(object):  # 1D parameter space only (for now)
     _param_name = 'params'
     def __init__(self, spectra, **kwargs):
+        self._param_name = kwargs.get('param_name', self._param_name)
         params = kwargs.get(self._param_name, range(len(spectra)))
         assert len(spectra) == len(params)
         self.spectra = spectra
@@ -502,11 +516,10 @@ class SpectrumMap(object):  # 1D parameter space only (for now)
 
     @classmethod
     def from_krx(cls, fname, **kwargs):
-        kf = KRXFile(fname)
-        spectra = [Spectrum.from_krx(fname, i) for i in range(kf.num_pages)]
+        spectra = Spectrum.from_krx(fname, page=None)
         s = spectra[0]
         if 'MapCoordinate' in s._metadata:
-            assert kf.num_pages == s['MapNoXSteps']
+            assert len(spectra) == s['MapNoXSteps']
             kwargs.setdefault(cls._param_name,
                               np.linspace(s['MapStartX'], s['MapEndX'], s['MapNoXSteps']))
         return cls(spectra=spectra, **kwargs)
@@ -525,7 +538,11 @@ class SpectrumMap(object):  # 1D parameter space only (for now)
 
     def _ipython_display_(self):
         from .widgets import isowidget
-        return isowidget(self)
+
+        display(isowidget(self))
+
+    def plot(self, *args, **kwargs):
+        pass
 
     def generate_fermimap(self, fl, width, dither_repair=False):
         fmap = []
@@ -613,10 +630,24 @@ class EnergyMap(SpectrumMap):
 
     @classmethod
     def get_coord_transformer(cls, V_0=0, photon_angle=30, WF=4., BE=0., ):
+        """Returns a function that transforms coordinate pairs (phi, hv) to (kx, kz)
+        V_0 (eV): inner potential relative to E_vac
+            V_0 (rel. to E_F) = V_0 (rel. to E_vac) - WF
+        photon_angle (deg): angle away from grazing incidence (assuming normal emission), 
+            i.e. (90 - photon_angle) == angle from normal incidence 
+        WF (eV): sample work function - usually unknown!
+        BE (eV): binding energy, >0
+
+        If you assume that WF_sample == WF_detector, then hv-WF-BE is essentially the kinetic energy you see on the detector.
+
+        # 0.5124 == ...
+        # 5.067*10**-4 == ...
+        """
         def transform(phi, hv):
-            # dx.doi.org/10.1107/S1600577513019085
-            kz = np.sqrt((hv-WF-BE)*np.cos(np.radians(phi))**2+V_0)*0.5124 + np.sin(np.radians(photon_angle))*hv*5.067*10**-4
-            kx = np.sqrt(hv-WF-BE)*0.5124*np.sin(np.radians(phi)) #+ np.cos(np.radians(30))*Y*5.068*10**-4
+            # see e.g. dx.doi.org/10.1107/S1600577513019085
+            # todo ky != 0, unify all k-space transformers
+            kz = np.sqrt((hv-WF-BE)*np.cos(np.deg2rad(phi))**2+V_0)*0.5124 + np.sin(np.deg2rad(photon_angle))*hv*5.067*10**-4
+            kx = np.sqrt(hv-WF-BE)*0.5124*np.sin(np.deg2rad(phi)) #+ np.cos(np.deg2rad(30))*Y*5.068*10**-4
             return kx, kz
         return transform
 

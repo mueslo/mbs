@@ -29,15 +29,12 @@ class EDC(object):
 
 
 def specwidget(spec, ax=None, fig=None, **plot_kwargs):
-    #matplotlib.use('module://ipympl.backend_nbagg')
-    #assert plt.get_backend() == 'module://ipympl.backend_nbagg'
-
     be = backend()
-    #print(plt.get_backend(), be)
     output = widgets.Output()
 
     if not ax:
         with plt.ioff():
+            #todo give specwidget id and remember to close
             fig, ax = plt.subplots(dpi=90, constrained_layout=True)
         with output:
             if be == backends.ipympl:
@@ -98,7 +95,7 @@ def specwidget(spec, ax=None, fig=None, **plot_kwargs):
     full_widget = widgets.VBox(vbox_list)
 
     #accordion = widgets.Accordion(children=[widgets.IntSlider(), widgets.Text()], titles=('Slider', 'Text'))
-    display(full_widget)
+    return full_widget
 
 def isowidget(specmap, ax=None, fl_default=None, width_default=None, dr_default=True, continuous_update=False, pmin=5, pmax=99.8, **plot_kwargs):
     be = backend()
@@ -181,8 +178,6 @@ def isowidget(specmap, ax=None, fl_default=None, width_default=None, dr_default=
     vbox_list = [controls, output]
     vbox_list.append(cb_output)
     full_widget = widgets.VBox(vbox_list)
-
-    #display(full_widget)
 
     return full_widget
 

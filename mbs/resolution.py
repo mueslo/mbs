@@ -8,7 +8,6 @@ from scipy.ndimage import gaussian_filter1d
 from scipy.linalg import svd
 import matplotlib.pyplot as plt
 
-from .io import parse_data
 from .utils import fl_guess
 
 
@@ -77,8 +76,8 @@ def fermi_fit(spec, T, de=1., ax=None, fl=None):
     return fit_params_d
 
 
-def opt_global(fits, T, *parsed_data, de=1., plot_fits=False):
-    func = make_fe(T, parsed_data[0][1]['Step Size']) # todo implement separate global err function for each
+def opt_global(fits, T, *specs, de=1., plot_fits=False):
+    func = make_fe(T, specs[0]['Step Size']) # todo implement separate global err function for each
 
     def global_err(p, *xys, verbose=False):
         assert len(xys) % 2 == 0 and len(xys) > 0
@@ -113,8 +112,8 @@ def opt_global(fits, T, *parsed_data, de=1., plot_fits=False):
         bounds_g.append((0, np.inf))
 
         p_global.append(fit["E_f"])
-        edc = parsed_data[i][0].sum(axis=1)
-        e_ax = np.linspace(parsed_data[i][1]['Start K.E.'], parsed_data[i][1]['End K.E.'], len(edc))
+        edc = specs[i].edc
+        e_ax = np.linspace(specs[i]['Start K.E.'], specs[i]['End K.E.'], len(edc))
         fl = fit["E_f"]
         window = (fl - de / 2, fl + de / 2)
         bounds_g.append(window)
@@ -174,8 +173,8 @@ def opt_global(fits, T, *parsed_data, de=1., plot_fits=False):
 
         if plot_fits:
             plt.figure(figsize=(3, 1))
-            plt.plot(np.linspace(parsed_data[i][1]['Start K.E.'],
-                                 parsed_data[i][1]['End K.E.'], len(edc)), parsed_data[i][0].sum(axis=1))
+            plt.plot(np.linspace(specs[i]['Start K.E.'],
+                                 specs[i]['End K.E.'], len(edc)), specs[i].edc)
             plt.plot(x, factor*func(x, *p_i))
             plt.xlim(x[0], x[-1])
             plt.show()
@@ -183,23 +182,18 @@ def opt_global(fits, T, *parsed_data, de=1., plot_fits=False):
     return pd.DataFrame(fits_global)
 
 
-def plot_opt(paths, params, T, de=1., param_name='measurement param', plot_param="sigma", fit_global=False, plot_fits=False,
+def plot_opt(specs, params, T, de=1., param_name='measurement param', plot_param="sigma", fit_global=False, plot_fits=False,
              zip_fname=None, fl=None, **plot_kwargs):
-    dmd = []
     fits = []
-    for p in paths:
-        data, metadata = parse_data(p, zip_fname=zip_fname)
-        data = data[:, 1:]
-        dmd.append((data, metadata))
-        
+    for spec in specs:
         if plot_fits:
             plt.figure(figsize=(3, 1))
-            plt.title(p)
-            fit = fermi_fit(data, metadata, T=T, de=de, fl=fl, ax=plt.gca())
+            plt.title(str(spec))
+            fit = fermi_fit(spec, T=T, de=de, fl=fl, ax=plt.gca())
             plt.show()
         else:
-            fit = fermi_fit(data, metadata, T=T, de=de, fl=fl)
-        fit['filename'] = basename(p)
+            fit = fermi_fit(spec, T=T, de=de, fl=fl)
+        fit['spectrum'] = str(spec)
         fits.append(fit)
     fits = pd.DataFrame(fits)
 
@@ -223,7 +217,7 @@ def plot_opt(paths, params, T, de=1., param_name='measurement param', plot_param
         print('starting global fit')
         if plot_kwargs['label'] == 'individual fit':
             del plot_kwargs['label']
-        fits_global = opt_global(fits, T, *dmd, de=de, plot_fits=plot_fits)
+        fits_global = opt_global(fits, T, *specs, de=de, plot_fits=plot_fits)
         fits_global['filename'] = fits['filename']
         plot_kwargs.setdefault('label', 'global fit')
         

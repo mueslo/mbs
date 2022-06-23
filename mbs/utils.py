@@ -9,8 +9,6 @@ from scipy.ndimage import gaussian_filter1d
 
 from .io import parse_data, is_mbs_filename
 
-cwd = os.getcwd()
-
 
 def fl_guess(e_ax, edc):
     #fl = e_ax[np.max(np.argwhere(edc > np.percentile(edc, 95)/2))]
@@ -160,7 +158,7 @@ if __name__ == '__main__':
     if not os.path.exists(args.path):
         raise Exception('path does not exist')
     elif os.path.isdir(args.path):
-        print("Working directory:", cwd)
+        print("Working directory:", os.getcwd())
         print("Target directory:", args.path)
         
         if args.d:
