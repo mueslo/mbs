@@ -56,7 +56,10 @@ def fermi_fit(spec, T, de=1., ax=None, fl=None):
               (np.inf, np.inf, np.inf, np.inf, window[1])]
     fit_params, cov = curve_fit(func, cut_e_ax, cut_edc,
                                 p0=initial_guess,
-                                bounds=bounds)
+                                bounds=bounds, 
+                                sigma=np.sqrt(cut_edc),
+                                absolute_sigma=False) 
+    # curve_fit absolute sigma=fac*np.sqrt(cut_edc); fac, because ADC mode produces many counts
 
     fit_params_d = dict(zip(param_names, fit_params))
     fit_params_d.update(dict(zip([p + '_err' for p in param_names], np.sqrt(np.diag(cov)))))
