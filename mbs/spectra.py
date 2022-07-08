@@ -137,11 +137,18 @@ class Spectrum(AbstractSpectrum):
             return None
 
         fname, page, zip_fname = self._path
-        info_path = splitext(fname)[0] + '.info'
-        try:
-            return parse_info(info_path, zip_fname)
-        except IOError:
-            return None
+        info_path = [f"{splitext(fname)[0]}.info"]
+
+        if page is not None:
+            info_path.insert(0, f"{splitext(fname)[0]}_{page}.info")
+
+        for p in info_path:
+            try:
+                return parse_info(p, zip_fname)
+            except IOError:
+                print(f'Could not find info file {p}')
+                continue
+        return None
 
     @property
     def _xscale(self):
