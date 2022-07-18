@@ -73,7 +73,7 @@ class Spectrum(AbstractSpectrum):
         if fname.endswith('.txt'):
             return cls.from_txt(fname, zip_fname, **kwargs)
         elif fname.endswith('.krx'):
-            return cls.from_krx(fname, **kwargs)
+            return cls.from_krx(fname, zip_fname, **kwargs)
         raise ValueError('Please use explicit format loaders if filename suffix was changed')
 
     @classmethod
@@ -83,11 +83,11 @@ class Spectrum(AbstractSpectrum):
         return spec
 
     @classmethod
-    def from_krx(cls, fname, page=0):
-        kf = KRXFile(fname)
-        
+    def from_krx(cls, fname, zip_fname=None, page=0):
+        kf = KRXFile(fname, zip_fname=zip_fname)
+
         if page is None:  # return all pages
-            return [cls.from_krx(fname, page=p) for p in range(kf.num_pages)]
+            return [cls.from_krx(fname, zip_fname, page=p) for p in range(kf.num_pages)]
 
         metadata = parse_lines(
             kf.page_metadata(page).splitlines(),
@@ -146,7 +146,7 @@ class Spectrum(AbstractSpectrum):
             try:
                 return parse_info(p, zip_fname)
             except IOError:
-                print(f'Could not find info file {p}')
+                # log.debug(f'Could not find info file {p} {zip_fname}')
                 continue
         return None
 
@@ -522,8 +522,8 @@ class SpectrumMap(object):  # 1D parameter space only (for now)
         return cls(spectra=spectra, **kwargs)
 
     @classmethod
-    def from_krx(cls, fname, **kwargs):
-        spectra = Spectrum.from_krx(fname, page=None)
+    def from_krx(cls, fname, zip_fname=None, **kwargs):
+        spectra = Spectrum.from_krx(fname, zip_fname=zip_fname, page=None)
         s = spectra[0]
         if 'MapCoordinate' in s._metadata:
             assert len(spectra) == s['MapNoXSteps']
