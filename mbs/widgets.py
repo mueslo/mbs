@@ -49,22 +49,24 @@ def specwidget(spec, ax=None, fig=None, **plot_kwargs):
     title = ax.set_title('')
 
     cmapcontrol = Dropdown(value='turbo', options=plt.colormaps(), description='Colormap')
+    vminmaxcontrol = FloatRangeSlider(min=0, max=100, value=(5, 99.5))
 
     controls = widgets.VBox([
-        widgets.HTML("<h1>hello</h1>"), #doesnt work
-        widgets.HBox([cmapcontrol]),
+        #widgets.HTML("<h1>hello</h1>"),
+        widgets.HBox([cmapcontrol, vminmaxcontrol]),
         #    widgets.HBox([]),
         ])
-    controls = cmapcontrol
 
-    def update_spec(cmap):
+    def update_spec(cmap, vminmax):
         im.set_cmap(cmap)
+        data = im.get_array()
+        im.set_clim(np.percentile(data, v) for v in vminmax)
         if be is backends.inline:
             output.clear_output(wait=True)
             with output:
                 display(fig)
 
-    cb_output = interactive_output(update_spec, {'cmap': cmapcontrol})
+    cb_output = interactive_output(update_spec, {'cmap': cmapcontrol, 'vminmax': vminmaxcontrol})
 
     plot_tab = widgets.VBox([controls, output])
     other_tab = widgets.Text('something')
