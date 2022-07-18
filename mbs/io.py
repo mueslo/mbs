@@ -4,6 +4,7 @@ import io
 import numpy as np
 import datetime
 import zipfile
+import gzip
 from contextlib import contextmanager
 from collections import OrderedDict
 from collections.abc import Iterable
@@ -15,7 +16,7 @@ fname_re = re.compile(r'.*(?P<number>\d{5})_(?P<region>\d{5}).txt')
 info_re = re.compile(r"^([^:]+):\s*([^(]+)\s*(\(([^)]+)\))?")
 
 
-def is_mbs_filename(path):     
+def is_mbs_filename(path):
      fname = os.path.basename(path)
      if fname_re.fullmatch(fname):
          return True
@@ -31,10 +32,15 @@ def mbs_boolean(s):
 
 
 @contextmanager
-def load(fname, zip_fname=None):
-    """Decorator that will open regular files and files contained within zip folders (archived measurements)"""
+def load(fname, zip_fname=None, mode='rt'):
+    """Decorator that opens regular files, gzipped files and
+    files contained within zip folders (e.g. archived measurements)"""
     if zip_fname is None:
-        with open(fname, 'r') as f:
+        if fname.endswith('.gz'):
+            open_func = gzip.open
+        else:
+            open_func = open
+        with open_func(fname, mode) as f:
             yield f
     else:
         with zipfile.ZipFile(zip_fname) as zip_f:
@@ -42,9 +48,12 @@ def load(fname, zip_fname=None):
                 fname = zip_f.getinfo(fname)
             except KeyError:
                 raise IOError(f'{zip_fname} does not contain {fname}')
-            with zip_f.open(fname, 'r') as f:
-                with io.TextIOWrapper(f) as f:
+            with zip_f.open(fname, ''.join(m for m in mode if m in ('r', 'w'))) as f:
+                if 'b' in mode:
                     yield f
+                else:  # r -> rt as normal open()
+                    with io.TextIOWrapper(f) as f:
+                        yield f
 
 
 # from https://stackoverflow.com/a/2437645/
