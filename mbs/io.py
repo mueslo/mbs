@@ -88,6 +88,10 @@ def parse_lines(lines, metadata_only=False):
                     return metadata
                 data_flag = True
             else:
+                # fix for old files
+                if line.startswith('TIMESTAMP:') and not line.startswith('TIMESTAMP:\t'):
+                    line = line.replace('TIMESTAMP:', 'TIMESTAMP:\t', 1)
+
                 name, val = line.split('\t', 1)
                 val = val.strip()
                 if not name and not val:

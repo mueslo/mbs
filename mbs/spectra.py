@@ -1,4 +1,5 @@
 import operator
+import warnings
 from functools import reduce
 from os.path import splitext, basename
 from collections import namedtuple, OrderedDict
@@ -93,7 +94,7 @@ class Spectrum(AbstractSpectrum):
             kf.page_metadata(page).splitlines(),
             metadata_only=True)
         spec = cls(data=kf.page(page), metadata=metadata)
-        spec._path = fname, page, None
+        spec._path = fname, page, zip_fname
         return spec
 
     #@classmethod
@@ -109,12 +110,15 @@ class Spectrum(AbstractSpectrum):
         l = 'x' if not self['Lens Mode'].startswith('L4Ang') else 'phi'
         da = DataArray(self.data, dims=('e', l),
                        coords={'e': self.energy_scale, l: self.lens_scale},
-                       attrs=self._metadata)
+                       attrs=self.metadata)
         return da
 
     @property
     def acq_mode(self):
-        return AcqMode[self['AcqMode']]
+        try:
+            return AcqMode[self['AcqMode']]
+        except KeyError:  # old files
+            return AcqMode.Swept if self['Swept Mode'] else AcqMode.Fixed
 
     def _apply_view(self, x, view_axis=None):
         if view_axis is None:
@@ -152,12 +156,18 @@ class Spectrum(AbstractSpectrum):
 
     @property
     def _xscale(self):
-        try:
-            return scale(self['XScaleMin'], self['XScaleMax'],
-                         self['XScaleMult'], self['XScaleName'])
-        except KeyError:
-            return scale(self['ScaleMin'], self['ScaleMax'],
-                         self['ScaleMult'], self['ScaleName'])
+        for version in reversed(range(2)):
+            try:
+                if version == 1:
+                    return scale(self['XScaleMin'], self['XScaleMax'],
+                                self['XScaleMult'], self['XScaleName'])
+                elif version == 0:
+                    return scale(self['ScaleMin'], self['ScaleMax'],
+                                 self['ScaleMult'], self['ScaleName'])
+            except KeyError:
+                continue
+        else:
+            return scale(0, 1, 1, 'undefined')
 
     @property
     def _lens_scale(self):
@@ -262,13 +272,13 @@ class Spectrum(AbstractSpectrum):
     def acqtime(self):
         """Nominal and effective (signal) acquisition time based on measurement parameters"""
 
-        if self['AcqMode'] == 'Fixed':
+        if self.acq_mode == AcqMode.Fixed:
             acqtime = self['ActScans'] * self['Frames Per Step'] * frame_unit
             eff_acqtime = acqtime
-        elif self['AcqMode'] == 'Swept':
+        elif self.acq_mode == AcqMode.Swept:
             acqtime = self['ActScans'] * self['TotSteps'] * self['Frames Per Step'] * frame_unit
             eff_acqtime = self['ActScans'] * self['No. Steps'] * self['Frames Per Step'] * frame_unit
-        elif self['AcqMode'] == 'Dither':
+        elif self.acq_mode == AcqMode.Dither:
             acqtime = self['ActScans'] * self['TotSteps'] * self['Frames Per Step'] * frame_unit
             eff_acqtime = acqtime * (self['No. Steps'] - self['TotSteps']) / self['No. Steps']
 
@@ -395,12 +405,18 @@ class Spectrum(AbstractSpectrum):
         y_data = np.sum(self.data, axis=1)
         if norm is None:
             pass
+        elif callable(norm):
+            y_data = norm(y_data)
+        elif isinstance(norm, Number):
+            y_data = y_data / norm
         elif norm == 'max':
             y_data = y_data / y_data.max()
         elif norm == 'maxmin':
             y_data = (y_data - y_data.min()) / (y_data.max() - y_data.min())
         elif norm == 'sum':
             y_data = y_data/y_data.sum()
+        elif norm == 'integral':
+            y_data = y_data / abs(np.trapz(y_data, x_scale))
         else:
             raise NotImplementedError
 
@@ -499,7 +515,8 @@ class SpectrumSum(Spectrum):
 
         ignore = set(['No Scans'])
         if not item in ignore | no_combine:
-            print(f'Warning: metadata values {item} differ for SpectrumSum summands')
+            msg = f"metadata entry '{item}' values  differ for SpectrumSum summands"
+            warnings.warn(msg)
         return vals
 
     @property
@@ -539,6 +556,12 @@ class SpectrumMap(object):  # 1D parameter space only (for now)
     @property
     def data(self):
         return np.stack([s.data for s in self.spectra])
+
+    @property
+    def xarray(self):
+        from xarray import DataArray, concat
+        return concat([spec.xarray for spec in self.spectra],
+                       DataArray(self.params, dims=[self._param_name]))
 
     def __array__(self):
         return self.data
