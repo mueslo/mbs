@@ -31,6 +31,10 @@ class EDC(object):
 def specwidget(spec, ax=None, fig=None, **plot_kwargs):
     be = backend()
     output = widgets.Output()
+    plot_kwargs.setdefault('cmap', 'turbo')
+    plot_kwargs.setdefault('vmin', 5)
+    plot_kwargs.setdefault('vmax', 99.5)
+
 
     if not ax:
         with plt.ioff():
@@ -48,8 +52,8 @@ def specwidget(spec, ax=None, fig=None, **plot_kwargs):
     im = spec.plot(ax, **plot_kwargs)
     title = ax.set_title('')
 
-    cmapcontrol = Dropdown(value='turbo', options=plt.colormaps(), description='Colormap')
-    vminmaxcontrol = FloatRangeSlider(min=0, max=100, value=(5, 99.5))
+    cmapcontrol = Dropdown(value=plot_kwargs['cmap'], options=plt.colormaps(), description='Colormap')
+    vminmaxcontrol = FloatRangeSlider(min=0, max=100, value=(plot_kwargs['vmin'], plot_kwargs['vmax']))
 
     controls = widgets.VBox([
         #widgets.HTML("<h1>hello</h1>"),
