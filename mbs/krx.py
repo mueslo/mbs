@@ -16,19 +16,18 @@ class KRXFile(object):
     
     def _read_header(self):
         with load(self.fname, zip_fname=self.zip_fname, mode='rb') as f:
-            dt_test = np.array(struct.unpack('ll', f.read(2 * 4)))
-            if all(dt_test != 0):
-                dt = np.dtype('int32')
-            else:
-                dt = np.dtype('int64')
+            endianness, char, itemsize = '<', 'i', 4
+            dt_test = np.array(struct.unpack(endianness + 2*char, f.read(2 * itemsize)))
+            if not all(dt_test != 0):  # 8byte int
+                char, itemsize = 'q', 8
             f.seek(0)
-            hdr0 = struct.unpack(dt.char, f.read(dt.itemsize))[0]
-            hdr1 = struct.unpack(dt.char * hdr0, f.read(dt.itemsize * hdr0))
-            hdr2 = struct.unpack(dt.char * 2, f.read(dt.itemsize * 2))
+            hdr0 = struct.unpack(endianness + char, f.read(itemsize))[0]
+            hdr1 = struct.unpack(endianness + char * hdr0, f.read(itemsize * hdr0))
+            hdr2 = struct.unpack(endianness + char * 2, f.read(itemsize * 2))
 
             if hdr2[0] != 0:
                 # DimSize+Len+MSA MapSizeArray
-                map_size_arr = struct.unpack(dt.char * hdr2[1], f.read(dt.itemsize * hdr2[1]))
+                map_size_arr = struct.unpack(endianness + char * hdr2[1], f.read(itemsize * hdr2[1]))
                 no_y = map_size_arr[0]
                 no_e = map_size_arr[1]
                 self.map_size = map_size_arr[2:]
@@ -68,7 +67,7 @@ class KRXFile(object):
         page_size = self.page_start[n] + np.prod(self.page_shape[n])
         with load(self.fname, zip_fname=self.zip_fname, mode='rb') as f:
             f.seek(page_size * dt.itemsize)
-            hdr_len = struct.unpack(dt.char, f.read(dt.itemsize))[0]
+            hdr_len = struct.unpack('<' + dt.char, f.read(dt.itemsize))[0]
             return f.read(hdr_len).decode('utf8')
     
     def export_page_txt(self, out_fname, n=0):
