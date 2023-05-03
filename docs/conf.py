@@ -10,9 +10,7 @@
 # add these directories to sys.path here. If the directory is relative to the
 # documentation root, use os.path.abspath to make it absolute, like shown here.
 #
-import os
-import sys
-sys.path.insert(0, os.path.abspath('..'))
+from importlib.metadata import version
 
 
 # -- Project information -----------------------------------------------------
@@ -22,7 +20,7 @@ copyright = '2022, Johannes Falke'
 author = 'Johannes Falke'
 
 # The full version, including alpha/beta/rc tags
-release = '0.2'
+release = version(project)
 
 
 # -- General configuration ---------------------------------------------------
