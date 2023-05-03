@@ -1,0 +1,47 @@
+[tool.setuptools.dynamic]
+version = {attr = "mbs.__version__"}
+
+[project]
+name = "mbs"
+description = 'Utilities for MB Scientific analyzer data'
+authors = [ {name = "Johannes Falke", email = "Johannes.Falke@cpfs.mpg.de"} ]
+requires-python = ">=3.6, <4"
+keywords = ["arpes", "spectroscopy", "physics", "science"]
+license = {text = "GPLv3"}
+dependencies = [
+    'numpy',
+    'scipy',
+    'matplotlib~=3.4',
+    'pandas',
+]
+dynamic = ["version"]
+
+[project.readme]
+file = "README.md"
+content-type = "text/markdown"
+
+[project.urls]
+homepage = "https://github.com/mueslo/mbs"
+documentation = "https://mbsutils.readthedocs.io/"
+
+[project.optional-dependencies]
+docs = [
+    "sphinx~=7.0",
+    "sphinx-rtd-theme",
+    "sphinx-gallery~=0.13",
+    "Pillow",
+]
+xarray = [ "xarray", ]
+widgets = [
+    "jupyterlab~=3.2",
+    "ipympl~=0.8",
+    "ipywidgets~=7.6",
+]
+
+
+[tool.setuptools]
+include-package-data = false
+
+[tool.setuptools.packages.find]
+where = ["src"]  # list of folders that contain the packages (["."] by default)
+namespaces = false  # to disable scanning PEP 420 namespaces (true by default)
