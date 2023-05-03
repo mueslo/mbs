@@ -30,8 +30,11 @@ def make_fe(T, step_size):
         n_ext = math.ceil(3*sigma/step_size)
         E_ext = np.pad(E, mode='linear_ramp', pad_width=n_ext, 
             end_values=(E[0]-n_ext*step_size, E[-1]+n_ext*step_size))
+        fe = fermiedge(E_ext, a, b, C, E_f, T)
+        if sigma == 0:
+            return fe
         return gaussian_filter1d(
-            fermiedge(E_ext, a, b, C, E_f, T), 
+            fe,
             sigma/step_size, 
             mode='nearest')[n_ext:-n_ext]
     return broadened_fermiedge
@@ -43,10 +46,12 @@ def cut(x, y, window):
     return x[idx_start:idx_end], y[idx_start:idx_end]
 
 
-def fermi_fit(spec, T, de=1., ax=None, fl=None):
+def fermi_fit(spec, T, de=1., ax=None, fl=None, sigma='sqrt'):
     fl = fl or fl_guess(spec.energy_scale, spec.edc)
     window = (fl - de / 2, fl + de / 2)
     cut_e_ax, cut_edc = cut(spec.energy_scale, spec.edc, window)
+    if sigma == 'sqrt':
+        sigma = np.sqrt(cut_edc)
 
     func = make_fe(T, spec.get_metadata('Step Size'))
 
@@ -57,7 +62,7 @@ def fermi_fit(spec, T, de=1., ax=None, fl=None):
     fit_params, cov = curve_fit(func, cut_e_ax, cut_edc,
                                 p0=initial_guess,
                                 bounds=bounds, 
-                                sigma=np.sqrt(cut_edc),
+                                sigma=sigma,
                                 absolute_sigma=False) 
     # curve_fit absolute sigma=fac*np.sqrt(cut_edc); fac, because ADC mode produces many counts
 
