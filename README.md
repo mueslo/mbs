@@ -17,6 +17,6 @@ To install using `conda`, please follow [these instructions](https://docs.conda.
 
 ## Usage & Documentation
 
-For some simple examples, see [mbs_example.ipynb](mbs_example.ipynb). In case interactive widgets are not showing up, please follow [this guide](https://ipywidgets.readthedocs.io/en/stable/user_install.html).
+For some simple examples, see [mbs_example.ipynb](examples/mbs_example.ipynb). In case interactive widgets are not showing up, please follow [this guide](https://ipywidgets.readthedocs.io/en/stable/user_install.html).
 Full documentation is still a work in progress will be found [here](https://mbsutils.readthedocs.org).
 
