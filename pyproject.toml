@@ -1,11 +1,13 @@
-[tool.setuptools.dynamic]
-version = {attr = "mbs.__version__"}
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "mbs"
+version = "0.2"
 description = 'Utilities for MB Scientific analyzer data'
 authors = [ {name = "Johannes Falke", email = "Johannes.Falke@cpfs.mpg.de"} ]
-requires-python = ">=3.6, <4"
+requires-python = ">=3.8, <4"
 keywords = ["arpes", "spectroscopy", "physics", "science"]
 license = {text = "GPLv3"}
 dependencies = [
@@ -14,7 +16,6 @@ dependencies = [
     'matplotlib~=3.4',
     'pandas',
 ]
-dynamic = ["version"]
 
 [project.readme]
 file = "README.md"
@@ -31,6 +32,7 @@ docs = [
     "sphinx-gallery~=0.13",
     "Pillow",
 ]
+tests = [ "pytest", ]
 xarray = [ "xarray", ]
 widgets = [
     "jupyterlab~=3.2",
