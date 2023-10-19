@@ -148,7 +148,7 @@ def isowidget(specmap, ax=None, fl_default=None, width_default=None, dr_default=
         #fp.set_clim(np.percentile(fmap, pmin), np.percentile(fmap, pmax))
         #fmap_set_clim(pmin, pmax)
         pmin, pmax = clim_p
-        fp.set_clim(np.percentile(fmap, pmin), np.percentile(fmap, pmax))
+        fp.set_clim(np.nanpercentile(fmap, pmin), np.nanpercentile(fmap, pmax))
         title.set_text(f"E={s.energy_scale[fl]:.2f}±{width*s['Step Size']:.2f}eV\n{s.duration}")
         #flush_figures()
 

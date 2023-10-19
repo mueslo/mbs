@@ -37,22 +37,28 @@ class AbstractSpectrum(NDArrayOperatorsMixin):
     def __array_ufunc__(self, ufunc, method, *args, **kwargs):
         #print(method, ufunc, args, kwargs)
         inputs = []
-        for arg in args:
+        metadata = None
+        for arg in args:  # first arg is self
             # In this case we accept only scalar numbers or DiagonalArrays.
             if isinstance(arg, Number):
                 inputs.append(arg)
             elif isinstance(arg, np.ndarray):
-                assert arg.shape[-1] == len(self.y)
-                inputs.append(arg)
+                print('ndarray ufunc')
+                #assert arg.shape[-1] == len(self.y)
+                inputs.append(np.broadcast_to(arg, self.data.shape))
             elif isinstance(arg, self.__class__):
                 assert np.allclose(self.lens_scale, arg.lens_scale)
                 assert np.allclose(self.energy_scale, arg.energy_scale)
                 inputs.append(arg.data)
+                if not metadata:
+                    metadata = arg._metadata
+                else:
+                    raise Exception('Metadata merging not implemented yet')
             else:
                 return NotImplemented
         if method == '__call__':
-            x = args
-            return self.__class__(x, ufunc(*inputs, **kwargs))
+            print(type(metadata))
+            return self.__class__(data=ufunc(*inputs, **kwargs), metadata=metadata)
         else:
             return NotImplemented
 
@@ -476,7 +482,7 @@ class Spectrum(AbstractSpectrum):
         return mean, std, skew
 
 
-class SpectrumSum(Spectrum):
+class SpectrumSum(Spectrum):  # DerivedSpectrum
     @classmethod
     def from_spectra(cls, *spectra):
         return reduce(operator.add, spectra)
@@ -530,8 +536,9 @@ class SpectrumMap(object):  # 1D parameter space only (for now)
         self._param_name = kwargs.get('param_name', self._param_name)
         params = kwargs.get(self._param_name, range(len(spectra)))
         assert len(spectra) == len(params)
-        self.spectra = spectra
-        self.params = params
+        sort_spec = sorted(zip(spectra, params), key=lambda x: x[1])
+        self.spectra = [s for s,_ in sort_spec]
+        self.params = [i for _,i in sort_spec]
 
     @classmethod
     def from_filenames(cls, fnames, zip_fname=None, **kwargs):
@@ -571,8 +578,27 @@ class SpectrumMap(object):  # 1D parameter space only (for now)
 
         display(isowidget(self))
 
-    def plot(self, *args, **kwargs):
-        pass
+    def plot(self, ax, lens_angle_c=1., other_angle_c=1., **kwargs):
+        try:
+            fmap = kwargs.pop('fmap')
+        except KeyError:
+            fmap = self.generate_fermimap(
+                kwargs.pop('fl'), kwargs.pop('width', 10), kwargs.pop('dither_repair', False))
+
+        # (-0.5, numcols-0.5, numrows-0.5, -0.5)
+        s = self.spectra[0]
+        dp = (self.params[-1] - self.params[0])/len(self.params)
+        dl = (s.lens_scale[-1] - s.lens_scale[0])/len(s.lens_scale)
+        extent = [lens_angle_c * (s.lens_scale[0] - dl/2),
+                  lens_angle_c * (s.lens_scale[-1] + dl/2),
+                  other_angle_c * (self.params[0] - dp/2),
+                  other_angle_c * (self.params[-1] + dp/2)]
+        kwargs.setdefault('extent', extent)
+        kwargs.setdefault('cmap', 'inferno')
+        print(kwargs)
+        ax.set_xlabel('Lens angle / deg')
+        ax.set_ylabel(self._param_label)
+        return ax.imshow(fmap, origin='lower', **kwargs)
 
     def generate_fermimap(self, fl, width, dither_repair=False):
         fmap = []
@@ -593,27 +619,6 @@ class SpectrumMap(object):  # 1D parameter space only (for now)
 class AngleMap(SpectrumMap):
     _param_name = 'angles'
     _param_label = 'Angle / deg'
-
-    def plot(self, ax, lens_angle_c=1., other_angle_c=1., **kwargs):
-        try:
-            fmap = kwargs.pop('fmap')
-        except KeyError:
-            fmap = self.generate_fermimap(
-                kwargs.pop('fl'), kwargs.pop('width', 10), kwargs.pop('dither_repair', False))
-
-        # (-0.5, numcols-0.5, numrows-0.5, -0.5)
-        s = self.spectra[0]
-        da = (self.angles[-1] - self.angles[0])/len(self.angles)
-        dl = (s.lens_scale[-1] - s.lens_scale[0])/len(s.lens_scale)
-        extent = [lens_angle_c * (s.lens_scale[0] - dl/2),
-                  lens_angle_c * (s.lens_scale[-1] + dl/2),
-                  other_angle_c * (self.angles[0] - da/2),
-                  other_angle_c * (self.angles[-1] + da/2)]
-        kwargs.setdefault('extent', extent)
-        kwargs.setdefault('cmap', 'inferno')
-        ax.set_xlabel('Lens angle / deg')
-        ax.set_ylabel('Deflection angle / deg')
-        return ax.imshow(fmap, origin='lower', **kwargs)
 
     def plot_k(self, ax, fl, width=10, lens_angle_c=1., other_angle_c=1., new_origin=None, **kwargs):
         X = self.spectra[len(self.spectra) // 2].lens_scale * lens_angle_c
@@ -640,6 +645,7 @@ class AngleMap(SpectrumMap):
         ax.pcolormesh(X2, Y2, fmap, **kwargs)
         ax.set_xlabel(r'$k_\parallel^\mathrm{Lens}$ / $1/\mathrm{\AA}$')
         ax.set_ylabel(r'$k_\parallel^\mathrm{Deflection}$ / $1/\mathrm{\AA}$')
+        ax.set_aspect('equal')
 
 class DeflectionMap(AngleMap):
     _param_name = 'angles'
@@ -681,15 +687,32 @@ class EnergyMap(SpectrumMap):
             return kx, kz
         return transform
 
-    def plot_k(self, ax, fmap=None, lens_angle_c=1., angle_zero=0, tf_kwargs={}, **kwargs):
-        phi = lens_angle_c * (self.spectra[0].lens_scale - angle_zero)
+    def plot(self, *args, **kwargs):
+        kwargs.setdefault('aspect', 'auto')
+        return super().plot(*args, **kwargs)
+    
+    def plot_k(self, ax, fmap=None, lens_angle_c=1., angle_zero=0, tf_kwargs={}, lens_scale=None, new_origin=None, **kwargs):
+        if lens_scale is None:
+            lens_scale = self.spectra[0].lens_scale
+        phi = lens_angle_c * (lens_scale - angle_zero)
         hv = self.energies
+
+        if fmap is None:
+            fmap = self.generate_fermimap(
+                kwargs.pop('fl', 100), 
+                kwargs.pop('width', 10),
+                kwargs.pop('dither_repair', False))
         iso_cut = fmap
 
         phi, hv = np.meshgrid(phi, hv)
 
         tf = self.get_coord_transformer(**tf_kwargs)
         kx, kz = tf(phi, hv)
+
+        if new_origin is not None:
+            kx = kx - new_origin[0]
+            kz = kz - new_origin[1]
+
         kwargs.setdefault('cmap', 'inferno')
         kwargs.setdefault('shading', 'gouraud')
         kwargs.setdefault('rasterized', True)
