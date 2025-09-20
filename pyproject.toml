@@ -7,7 +7,7 @@ name = "mbs"
 version = "0.2"
 description = 'Utilities for MB Scientific analyzer data'
 authors = [ {name = "Johannes Falke", email = "Johannes.Falke@cpfs.mpg.de"} ]
-requires-python = ">=3.8, <4"
+requires-python = ">=3.9, <4"
 keywords = ["arpes", "spectroscopy", "physics", "science"]
 license = {text = "GPLv3"}
 dependencies = [
@@ -35,9 +35,9 @@ docs = [
 tests = [ "pytest", ]
 xarray = [ "xarray", ]
 widgets = [
-    "jupyterlab~=3.2",
+    "jupyterlab>=3.2,<5",
     "ipympl~=0.8",
-    "ipywidgets~=7.6",
+    "ipywidgets>=7.6,<9",
 ]
 
 
