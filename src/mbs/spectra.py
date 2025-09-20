@@ -123,7 +123,11 @@ class Spectrum(AbstractSpectrum):
     def acq_mode(self):
         try:
             return AcqMode[self['AcqMode']]
-        except KeyError:  # old files
+        except KeyError:
+            # treat FixedTrigd as Fixed
+            if self['AcqMode'] == 'FixedTrigd':
+                return AcqMode.Fixed
+            # old files didn't have AcqMode, instead had a boolean 'Swept Mode'
             return AcqMode.Swept if self['Swept Mode'] else AcqMode.Fixed
 
     def _apply_view(self, x, view_axis=None):

@@ -129,7 +129,7 @@ def isowidget(specmap, ax=None, fl_default=None, width_default=None, dr_default=
     flcontrol = IntSlider(description='Fermi level', value=fl_default, min=0, max=len(s.data)-1, step=1, continuous_update=continuous_update)
     widthcontrol = IntSlider(description='Window', value=width_default, min=1, max=len(s.data), step=1, continuous_update=continuous_update)
     drcontrol = Checkbox(description='DR', value=dr_default)
-    climcontrol = FloatRangeSlider(description='CL (\%ile)', value=[pmin, pmax], min=0., max=100., step=0.1, continuous_update=continuous_update)
+    climcontrol = FloatRangeSlider(description=r'CL (%ile)', value=[pmin, pmax], min=0., max=100., step=0.1, continuous_update=continuous_update)
     controls = widgets.VBox([
         widgets.HBox([flcontrol, climcontrol]),
         widgets.HBox([widthcontrol, drcontrol, ])])
