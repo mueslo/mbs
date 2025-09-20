@@ -10,6 +10,7 @@ from collections import OrderedDict
 from collections.abc import Iterable
 
 mbs_timestamp = lambda s: datetime.datetime.strptime(s.strip(), "%d/%m/%Y   %H:%M")
+mbs_timestamp2 = lambda s: datetime.datetime.strptime(s.strip(), "%m/%d/%Y   %I:%M %p")
 info_timestamp = lambda s: datetime.datetime.strptime(s.strip(), "%d/%m/%Y %H:%M:%S")
 frame_unit = datetime.timedelta(seconds=0.001)
 fname_re = re.compile(r'.*(?P<number>\d{5})_(?P<region>\d{5}).txt')
@@ -24,9 +25,9 @@ def is_mbs_filename(path):
 
 
 def mbs_boolean(s):
-    if s == 'Yes':
+    if s.lower() == 'yes':
         return True
-    elif s == 'No':
+    elif s.lower() == 'no':
         return False
     raise ValueError
 
@@ -96,7 +97,7 @@ def parse_lines(lines, metadata_only=False):
                 val = val.strip()
                 if not name and not val:
                     continue
-                for T in (int, float, mbs_timestamp, mbs_boolean):
+                for T in (int, float, mbs_timestamp, mbs_timestamp2, mbs_boolean):
                     try:
                         val = T(val)
                         break
