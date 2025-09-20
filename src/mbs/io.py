@@ -169,7 +169,7 @@ class MBSFilePathGenerator(object):
             return [self(number, r) for r in region]
         
         if region is None:
-            num_re = re.compile('{}{:05d}_\d{{5}}.txt'.format(self.prefix, number))
+            num_re = re.compile(r'{}{:05d}_\d{{5}}.txt'.format(self.prefix, number))
             paths = list(filter(lambda x: num_re.fullmatch(x), os.listdir(self.directory or '.')))
             if self.directory:
                 paths = [os.path.join(self.directory, p) for p in paths]
