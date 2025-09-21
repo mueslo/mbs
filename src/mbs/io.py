@@ -5,6 +5,7 @@ import numpy as np
 import datetime
 import zipfile
 import gzip
+import warnings
 from contextlib import contextmanager
 from collections import OrderedDict
 from collections.abc import Iterable
@@ -105,7 +106,9 @@ def parse_lines(lines, metadata_only=False):
                         continue
 
                 if name in metadata:
-                    print('Warning, duplicate field', name)
+                    warnings.warn(
+                        f'Duplicate field {name} in metadata, '
+                        f'overwriting previous value {metadata[name]} with {val}')
                 metadata[name] = val
         if metadata['NoS'] != len(data[0]):
             assert metadata['NoS'] == len(data[0]) - 1 or len(data[0]) == 2  # resolved or integrated mode
