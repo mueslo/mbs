@@ -105,7 +105,7 @@ def parse_lines(lines, metadata_only=False):
                     except Exception as e:
                         continue
 
-                if name in metadata:
+                if name in metadata and metadata[name] != val:
                     warnings.warn(
                         f'Duplicate field {name} in metadata, '
                         f'overwriting previous value {metadata[name]} with {val}')
