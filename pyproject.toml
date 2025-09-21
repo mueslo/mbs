@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mbs"
-version = "0.2.1"
+version = "0.2.2"
 description = 'Utilities for MB Scientific analyzer data'
 authors = [ {name = "Johannes Falke", email = "Johannes.Falke@cpfs.mpg.de"} ]
 requires-python = ">=3.9, <4"
