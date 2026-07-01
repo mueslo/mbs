@@ -27,7 +27,7 @@ documentation = "https://mbsutils.readthedocs.io/"
 
 [project.optional-dependencies]
 docs = [
-    "sphinx~=7.0",
+    "sphinx>=7,<9",
     "sphinx-rtd-theme",
     "sphinx-gallery~=0.13",
     "Pillow",
